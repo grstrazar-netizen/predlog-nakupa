@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Predlog nakupa">
+  <rect width="128" height="128" rx="24" fill="#111"/>
+  <rect x="32" y="18" width="64" height="92" rx="5" fill="#fff"/>
+  <path d="M45 41h38M45 55h38M45 69h30M45 91h38" stroke="#111" stroke-width="6" stroke-linecap="round"/>
+</svg>

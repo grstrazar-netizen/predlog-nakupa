@@ -1,0 +1,20 @@
+{
+  "name": "Predlog nakupa drobnega materiala",
+  "short_name": "Predlog nakupa",
+  "description": "Lokalna PWA aplikacija za izdajo dokumentov Predlog nakupa drobnega materiala.",
+  "id": "/",
+  "lang": "sl",
+  "scope": "/",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f4f5",
+  "theme_color": "#f4f4f5",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
