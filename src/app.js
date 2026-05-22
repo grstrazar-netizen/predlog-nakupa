@@ -48,11 +48,15 @@ const state = {
 };
 
 let outsideClickBound = false;
-let onboardingResizeBound = false;
+let onboardingViewportBound = false;
+let onboardingPositionFrame = 0;
+let onboardingDemoTimer = 0;
+let onboardingCalculatorSnapshot = null;
 let touchPopoverTimer = 0;
 let hoverPopoverTimer = 0;
 const ONBOARDING_STORAGE_KEY = "predlog-nakupa:onboarding-complete:v1";
 const DOCUMENT_POPOVER_HOVER_DELAY_MS = 1000;
+const ONBOARDING_CALCULATOR_DEMO_TEXT = "- slušalke 2*230 eur\n- čelada 60 eur\n- popust 100 - 10% eur";
 const DOCUMENT_STATUS_OPTIONS = [
   { value: "", label: "Brez statusa", className: "none" },
   { value: "submitted", label: "Oddano", className: "submitted" },
@@ -68,9 +72,10 @@ const ONBOARDING_STEPS = [
   },
   {
     target: ".explanation-notes",
+    demo: "calculator",
     title: "Opis zna biti mali kalkulator",
     body:
-      "V obrazložitev lahko napišeš 2*230 eur, 100 - 10% eur ali (3*100+6) eur. Polje zna seštevati, odštevati, množiti, deliti in računati popuste, seštevek pa se prenese spodaj. Še vedno ga lahko popraviš ročno."
+      "V obrazložitev lahko napišeš 2*230 eur, 100 - 10% eur ali (3*100+6) eur. Polje zna seštevati, odštevati, množiti, deliti in računati popuste, seštevek pa se prenese spodaj. Mini primer se zdaj vpiše kar sam, seveda pa lahko seštevek vedno popraviš ročno."
   },
   {
     target: "#company",
@@ -654,7 +659,8 @@ function render() {
   bindEvents();
   refreshIcons();
   renderToast();
-  positionOnboardingTooltip();
+  positionOnboardingTooltip({ reveal: true });
+  syncOnboardingCalculatorDemo();
 }
 
 function refreshIcons() {
@@ -671,6 +677,10 @@ function refreshIcons() {
 function bindEvents() {
   document.querySelectorAll("[data-field]").forEach((field) => {
     field.addEventListener("input", (event) => {
+      if (event.currentTarget.dataset.onboardingDemoActive === "true") {
+        stopOnboardingCalculatorDemo({ restore: false });
+      }
+
       const name = event.currentTarget.dataset.field;
       if (name === "estimatedValueCents") {
         state.current.estimatedValueCents = parseMoneyToCents(event.currentTarget.value);
@@ -781,9 +791,11 @@ function bindEvents() {
     outsideClickBound = true;
   }
 
-  if (!onboardingResizeBound) {
-    window.addEventListener("resize", positionOnboardingTooltip);
-    onboardingResizeBound = true;
+  if (!onboardingViewportBound) {
+    window.addEventListener("resize", positionOnboardingTooltip, { passive: true });
+    window.addEventListener("scroll", positionOnboardingTooltip, { passive: true, capture: true });
+    document.addEventListener("scroll", positionOnboardingTooltip, { passive: true, capture: true });
+    onboardingViewportBound = true;
   }
 }
 
@@ -857,6 +869,8 @@ function bindOnboardingEvents() {
 }
 
 function handleOnboardingAction(action) {
+  stopOnboardingCalculatorDemo({ restore: true });
+
   if (action === "confirm-storage") {
     finishOnboarding();
     return;
@@ -903,6 +917,7 @@ function assignRandomLabCode() {
 }
 
 function showStorageWarningStep() {
+  stopOnboardingCalculatorDemo({ restore: true });
   state.onboarding = {
     ...state.onboarding,
     active: true,
@@ -912,6 +927,7 @@ function showStorageWarningStep() {
 }
 
 function startOnboardingTour() {
+  stopOnboardingCalculatorDemo({ restore: true });
   const labName = String(document.querySelector("[data-onboarding-lab-name]")?.value || state.onboarding.labName).trim();
   const labCode = deriveLabCodeFromName(labName);
   state.current.labCode = labCode;
@@ -943,6 +959,7 @@ function markOnboardingCompleted() {
 }
 
 function finishOnboarding() {
+  stopOnboardingCalculatorDemo({ restore: true });
   markOnboardingCompleted();
   document.querySelectorAll(".onboarding-target").forEach((element) => element.classList.remove("onboarding-target"));
   state.onboarding = {
@@ -966,8 +983,90 @@ function openOnboardingIfNeeded() {
   };
 }
 
-function positionOnboardingTooltip() {
-  window.requestAnimationFrame(() => {
+function isOnboardingCalculatorDemoStep() {
+  if (!state.onboarding.active || state.onboarding.stage !== "tour") return false;
+  return ONBOARDING_STEPS[state.onboarding.step]?.demo === "calculator";
+}
+
+function applyOnboardingCalculatorDemoText(text) {
+  state.current.explanation = text;
+  const calculated = extractEuroTotalCents(text);
+  state.current.estimatedValueCents = calculated;
+
+  const textarea = document.querySelector(".explanation-notes");
+  if (textarea) {
+    textarea.dataset.onboardingDemoActive = "true";
+    textarea.value = text;
+  }
+
+  const valueInput = document.getElementById("estimatedValue");
+  if (valueInput) valueInput.value = centsToInputValue(calculated);
+}
+
+function startOnboardingCalculatorDemo() {
+  if (onboardingCalculatorSnapshot || onboardingDemoTimer) return;
+
+  onboardingCalculatorSnapshot = {
+    explanation: state.current.explanation,
+    estimatedValueCents: state.current.estimatedValueCents
+  };
+
+  let index = 0;
+  const typeNext = () => {
+    if (!isOnboardingCalculatorDemoStep()) {
+      stopOnboardingCalculatorDemo({ restore: true });
+      return;
+    }
+
+    applyOnboardingCalculatorDemoText(ONBOARDING_CALCULATOR_DEMO_TEXT.slice(0, index));
+    index += 1;
+
+    if (index <= ONBOARDING_CALCULATOR_DEMO_TEXT.length) {
+      const delay = ONBOARDING_CALCULATOR_DEMO_TEXT[index - 1] === "\n" ? 260 : 34;
+      onboardingDemoTimer = window.setTimeout(typeNext, delay);
+      return;
+    }
+
+    onboardingDemoTimer = 0;
+  };
+
+  typeNext();
+}
+
+function stopOnboardingCalculatorDemo({ restore = true } = {}) {
+  window.clearTimeout(onboardingDemoTimer);
+  onboardingDemoTimer = 0;
+
+  const textarea = document.querySelector(".explanation-notes");
+  if (textarea) delete textarea.dataset.onboardingDemoActive;
+
+  if (restore && onboardingCalculatorSnapshot) {
+    state.current.explanation = onboardingCalculatorSnapshot.explanation;
+    state.current.estimatedValueCents = onboardingCalculatorSnapshot.estimatedValueCents;
+
+    if (textarea) textarea.value = state.current.explanation;
+    const valueInput = document.getElementById("estimatedValue");
+    if (valueInput) valueInput.value = centsToInputValue(state.current.estimatedValueCents);
+  }
+
+  onboardingCalculatorSnapshot = null;
+}
+
+function syncOnboardingCalculatorDemo() {
+  if (isOnboardingCalculatorDemoStep()) {
+    startOnboardingCalculatorDemo();
+    return;
+  }
+
+  stopOnboardingCalculatorDemo({ restore: true });
+}
+
+function positionOnboardingTooltip(options = {}) {
+  const reveal = options?.reveal === true;
+  if (onboardingPositionFrame) window.cancelAnimationFrame(onboardingPositionFrame);
+
+  onboardingPositionFrame = window.requestAnimationFrame(() => {
+    onboardingPositionFrame = 0;
     document.querySelectorAll(".onboarding-target").forEach((element) => element.classList.remove("onboarding-target"));
     if (!state.onboarding.active || state.onboarding.stage !== "tour") return;
 
@@ -978,7 +1077,7 @@ function positionOnboardingTooltip() {
     const spotlight = document.querySelector("[data-onboarding-spotlight]");
     if (!target || !tooltip || !spotlight) return;
 
-    target.scrollIntoView({ block: "center", inline: "nearest" });
+    if (reveal) target.scrollIntoView({ block: "center", inline: "nearest" });
     const rect = target.getBoundingClientRect();
     target.classList.add("onboarding-target");
 
@@ -1055,6 +1154,10 @@ function showSuggestions(input) {
 
 async function handleAction(action) {
   try {
+    if (isOnboardingCalculatorDemoStep()) {
+      stopOnboardingCalculatorDemo({ restore: true });
+    }
+
     if (action === "new") {
       await newDocument();
     } else if (action === "save") {

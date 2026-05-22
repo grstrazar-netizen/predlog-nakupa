@@ -326,6 +326,11 @@ button:disabled {
   background: #ffffff;
 }
 
+.explanation-notes[data-onboarding-demo-active="true"] {
+  color: #52525b;
+  caret-color: transparent;
+}
+
 .doc-purpose {
   height: 30px;
   min-height: 30px;
