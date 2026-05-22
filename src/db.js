@@ -69,6 +69,14 @@ export async function saveProposal(proposal) {
   return proposal;
 }
 
+export async function deleteProposal(id) {
+  if (!id) return;
+  const db = await openDatabase();
+  const tx = db.transaction(STORES.proposals, "readwrite");
+  tx.objectStore(STORES.proposals).delete(id);
+  await transactionDone(tx);
+}
+
 export async function saveAttachment(attachment) {
   const db = await openDatabase();
   const tx = db.transaction(STORES.attachments, "readwrite");

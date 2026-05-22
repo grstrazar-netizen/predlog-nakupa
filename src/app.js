@@ -19,6 +19,7 @@ import {
 } from "./utils.js";
 import {
   deleteAttachment,
+  deleteProposal,
   getAllProposals,
   getAttachment,
   saveAttachment,
@@ -35,6 +36,7 @@ const state = {
   historyModalOpen: false,
   statusMenu: null,
   documentPopover: null,
+  deleteConfirmId: "",
   onboarding: {
     active: false,
     stage: "",
@@ -54,8 +56,11 @@ let onboardingDemoTimer = 0;
 let onboardingCalculatorSnapshot = null;
 let touchPopoverTimer = 0;
 let hoverPopoverTimer = 0;
+let recentDeleteDrag = null;
+let suppressedRecentClickId = "";
 const ONBOARDING_STORAGE_KEY = "predlog-nakupa:onboarding-complete:v1";
 const DOCUMENT_POPOVER_HOVER_DELAY_MS = 1000;
+const RECENT_DELETE_DRAG_DISTANCE = 92;
 const ONBOARDING_CALCULATOR_DEMO_TEXT = "- slušalke 2*230 eur\n- čelada 60 eur\n- popust 100 - 10% eur";
 const DOCUMENT_STATUS_OPTIONS = [
   { value: "", label: "Brez statusa", className: "none" },
@@ -184,6 +189,16 @@ function renderStatusMenu() {
           </button>
         `;
       }).join("")}
+      <span class="status-menu-separator" aria-hidden="true"></span>
+      <button
+        class="status-menu-option status-menu-option-danger"
+        type="button"
+        role="menuitem"
+        data-delete-request-id="${escapeHtml(proposal.id)}"
+      >
+        ${icon("trash-2")}
+        <span>Izbriši predlog ...</span>
+      </button>
     </div>
   `;
 }
@@ -206,6 +221,38 @@ function renderDocumentPopover() {
       <span class="document-popover-label">Podjetje</span>
       <strong>${escapeHtml(company)}</strong>
       <span>${formatCurrency(proposal.estimatedValueCents || 0)} · ${escapeHtml(status.label)} · ${escapeHtml(attachmentText)}</span>
+    </div>
+  `;
+}
+
+function renderDeleteConfirm() {
+  if (!state.deleteConfirmId) return "";
+  const proposal = state.proposals.find((item) => item.id === state.deleteConfirmId);
+  if (!proposal) return "";
+
+  const serial = proposal.serial || "ta predlog";
+  const company = proposal.company || "Brez podjetja";
+
+  return `
+    <div class="modal-backdrop delete-modal-backdrop" data-action="cancel-delete" role="presentation">
+      <section class="modal-window delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title" data-modal-window>
+        <header class="modal-header">
+          <h2 class="modal-title" id="delete-modal-title">Izbrišem predlog?</h2>
+          <button class="button button-icon-only button-ghost" type="button" data-action="cancel-delete" aria-label="Prekliči brisanje">
+            ${icon("x")}
+          </button>
+        </header>
+        <div class="modal-body delete-modal-body">
+          <p>
+            Predlog <strong>${escapeHtml(serial)}</strong> za <strong>${escapeHtml(company)}</strong> bo odstranjen iz lokalne evidence in letnega seštevka.
+          </p>
+          <p class="delete-warning">Tega ni mogoče razveljaviti. PDF-ji, ki so že preneseni ali natisnjeni zunaj aplikacije, se seveda ne izbrišejo.</p>
+          <div class="modal-actions">
+            <button class="button button-outline" type="button" data-action="cancel-delete">Prekliči</button>
+            <button class="button button-solid button-danger" type="button" data-action="confirm-delete">Izbriši predlog</button>
+          </div>
+        </div>
+      </section>
     </div>
   `;
 }
@@ -652,6 +699,8 @@ function render() {
       }
       ${renderStatusMenu()}
       ${renderDocumentPopover()}
+      ${renderDeleteConfirm()}
+      <div class="delete-drag-hint" data-delete-drag-hint aria-hidden="true">Povleci ven iz kartice</div>
       ${renderOnboarding()}
     </main>
   `;
@@ -722,7 +771,11 @@ function bindEvents() {
   });
 
   document.querySelectorAll("[data-load-id]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", (event) => {
+      if (consumeSuppressedRecentClick(button.dataset.loadId)) {
+        event.preventDefault();
+        return;
+      }
       clearDocumentPopoverTimers();
       loadExistingDocument(button.dataset.loadId);
     });
@@ -731,17 +784,21 @@ function bindEvents() {
     button.addEventListener("focus", () => openDocumentPopoverFromElement(button));
     button.addEventListener("blur", closeDocumentPopover);
     button.addEventListener("pointerdown", (event) => {
+      startRecentDeleteDrag(event, button);
       if (event.pointerType === "mouse") return;
       window.clearTimeout(touchPopoverTimer);
       touchPopoverTimer = window.setTimeout(() => {
         openDocumentPopoverFromElement(button);
       }, 520);
     });
+    button.addEventListener("pointermove", (event) => updateRecentDeleteDrag(event, button));
     button.addEventListener("pointerup", () => {
       window.clearTimeout(touchPopoverTimer);
+      finishRecentDeleteDrag();
     });
     button.addEventListener("pointercancel", () => {
       window.clearTimeout(touchPopoverTimer);
+      cancelRecentDeleteDrag();
     });
     button.addEventListener("contextmenu", (event) => {
       event.preventDefault();
@@ -775,12 +832,27 @@ function bindEvents() {
     });
   });
 
-  document.querySelector(".modal-backdrop")?.addEventListener("click", (event) => {
-    if (event.target === event.currentTarget) closeHistoryModal();
+  document.querySelectorAll("[data-delete-request-id]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openDeleteConfirm(button.dataset.deleteRequestId);
+    });
   });
-  document.querySelector("[data-modal-window]")?.addEventListener("click", (event) => {
+
+  document.querySelectorAll(".modal-backdrop").forEach((backdrop) => {
+    backdrop.addEventListener("click", (event) => {
+      if (event.target !== event.currentTarget) return;
+      if (backdrop.dataset.action === "cancel-delete") {
+        closeDeleteConfirm();
+      } else {
+        closeHistoryModal();
+      }
+    });
+  });
+  document.querySelectorAll("[data-modal-window]").forEach((modal) => modal.addEventListener("click", (event) => {
     event.stopPropagation();
-  });
+  }));
 
   document.getElementById("offerInput")?.addEventListener("change", handleOfferSelected);
   bindOfferDropzone();
@@ -1174,6 +1246,10 @@ async function handleAction(action) {
       openHistoryModal();
     } else if (action === "close-history") {
       closeHistoryModal();
+    } else if (action === "cancel-delete") {
+      closeDeleteConfirm();
+    } else if (action === "confirm-delete") {
+      await confirmDeleteProposal();
     }
   } catch (error) {
     console.error(error);
@@ -1193,6 +1269,47 @@ function closeHistoryModal() {
   render();
 }
 
+function openDeleteConfirm(proposalId) {
+  if (!proposalId) return;
+  clearDocumentPopoverTimers();
+  closeDocumentPopover();
+  state.statusMenu = null;
+  state.deleteConfirmId = proposalId;
+  render();
+}
+
+function closeDeleteConfirm() {
+  if (!state.deleteConfirmId) return;
+  state.deleteConfirmId = "";
+  render();
+}
+
+async function confirmDeleteProposal() {
+  const proposalId = state.deleteConfirmId;
+  const proposal = state.proposals.find((item) => item.id === proposalId);
+  if (!proposal) {
+    closeDeleteConfirm();
+    return;
+  }
+
+  if (proposal.offerAttachmentId) {
+    await deleteAttachment(proposal.offerAttachmentId);
+  }
+  await deleteProposal(proposal.id);
+
+  state.proposals = sortRecent(await getAllProposals());
+  if (state.current.id === proposal.id) {
+    state.current = createBlankProposal(state.proposals[0] || proposal);
+    state.attachment = null;
+    state.dirty = false;
+  }
+  state.deleteConfirmId = "";
+  state.statusMenu = null;
+  closeDocumentPopover();
+  render();
+  showToast(`Predlog ${proposal.serial || ""} je izbrisan.`);
+}
+
 function openStatusMenu(proposalId, x, y) {
   if (!proposalId) return;
   state.statusMenu = { proposalId, x, y };
@@ -1203,6 +1320,136 @@ function closeStatusMenu() {
   if (!state.statusMenu) return;
   state.statusMenu = null;
   render();
+}
+
+function consumeSuppressedRecentClick(proposalId) {
+  if (!proposalId || proposalId !== suppressedRecentClickId) return false;
+  suppressedRecentClickId = "";
+  return true;
+}
+
+function suppressRecentClick(proposalId) {
+  suppressedRecentClickId = proposalId;
+  window.setTimeout(() => {
+    if (suppressedRecentClickId === proposalId) suppressedRecentClickId = "";
+  }, 0);
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function pointerOutsideRect(x, y, rect, margin = 0) {
+  return x < rect.left - margin || x > rect.right + margin || y < rect.top - margin || y > rect.bottom + margin;
+}
+
+function dragDeleteContainerFor(element) {
+  return element.closest(".panel") || element.closest(".modal-window") || element.parentElement;
+}
+
+function deleteDragHint() {
+  return document.querySelector("[data-delete-drag-hint]");
+}
+
+function updateDeleteDragHint(event, ready) {
+  const hint = deleteDragHint();
+  if (!hint) return;
+
+  hint.textContent = ready ? "Spusti za brisanje" : "Povleci ven iz kartice";
+  hint.classList.add("is-visible");
+  hint.classList.toggle("is-ready", ready);
+  hint.style.left = `${Math.round(clamp(event.clientX - 88, 12, window.innerWidth - 188))}px`;
+  hint.style.top = `${Math.round(clamp(event.clientY + 14, 12, window.innerHeight - 48))}px`;
+}
+
+function hideDeleteDragHint() {
+  const hint = deleteDragHint();
+  if (!hint) return;
+  hint.classList.remove("is-visible", "is-ready");
+  hint.removeAttribute("style");
+}
+
+function startRecentDeleteDrag(event, element) {
+  if (!event.isPrimary || event.button !== 0 || state.busy) return;
+  if (event.target.closest("[data-status-menu-id]")) return;
+
+  const container = dragDeleteContainerFor(element);
+  if (!container) return;
+
+  recentDeleteDrag = {
+    element,
+    proposalId: element.dataset.loadId,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    containerRect: container.getBoundingClientRect(),
+    dragging: false,
+    ready: false
+  };
+  element.setPointerCapture?.(event.pointerId);
+}
+
+function updateRecentDeleteDrag(event, element) {
+  if (!recentDeleteDrag || recentDeleteDrag.pointerId !== event.pointerId || recentDeleteDrag.element !== element) return;
+
+  const dx = event.clientX - recentDeleteDrag.startX;
+  const dy = event.clientY - recentDeleteDrag.startY;
+  const distance = Math.hypot(dx, dy);
+  if (!recentDeleteDrag.dragging && distance < 10) return;
+  if (!recentDeleteDrag.dragging && Math.abs(dx) < Math.abs(dy) * 1.2) {
+    cancelRecentDeleteDrag();
+    return;
+  }
+
+  if (!recentDeleteDrag.dragging) {
+    recentDeleteDrag.dragging = true;
+    clearDocumentPopoverTimers();
+    state.documentPopover = null;
+    state.statusMenu = null;
+    document.querySelector(".document-popover")?.remove();
+    document.querySelector(".status-menu")?.remove();
+    element.classList.add("is-delete-dragging");
+  }
+
+  event.preventDefault();
+  const limitedX = clamp(dx, -260, 260);
+  const limitedY = clamp(dy, -90, 90);
+  const ready =
+    distance >= RECENT_DELETE_DRAG_DISTANCE &&
+    pointerOutsideRect(event.clientX, event.clientY, recentDeleteDrag.containerRect, 14);
+
+  recentDeleteDrag.ready = ready;
+  element.classList.toggle("is-delete-ready", ready);
+  element.style.transform = `translate(${Math.round(limitedX)}px, ${Math.round(limitedY)}px) rotate(${limitedX / 42}deg)`;
+  element.style.opacity = ready ? "0.72" : "0.88";
+  updateDeleteDragHint(event, ready);
+}
+
+function resetRecentDeleteDragElement() {
+  if (!recentDeleteDrag?.element) return;
+  recentDeleteDrag.element.classList.remove("is-delete-dragging", "is-delete-ready");
+  recentDeleteDrag.element.style.removeProperty("transform");
+  recentDeleteDrag.element.style.removeProperty("opacity");
+}
+
+function finishRecentDeleteDrag() {
+  if (!recentDeleteDrag) return;
+
+  const { proposalId, ready, dragging } = recentDeleteDrag;
+  if (dragging) suppressRecentClick(proposalId);
+  resetRecentDeleteDragElement();
+  hideDeleteDragHint();
+  recentDeleteDrag = null;
+
+  if (ready) openDeleteConfirm(proposalId);
+}
+
+function cancelRecentDeleteDrag() {
+  if (!recentDeleteDrag) return;
+  if (recentDeleteDrag.dragging) suppressRecentClick(recentDeleteDrag.proposalId);
+  resetRecentDeleteDragElement();
+  hideDeleteDragHint();
+  recentDeleteDrag = null;
 }
 
 function clearDocumentPopoverTimers() {

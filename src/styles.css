@@ -152,6 +152,17 @@ button:disabled {
   background: #27272a;
 }
 
+.button-danger {
+  border-color: #991b1b;
+  background: #991b1b;
+  color: #ffffff;
+}
+
+.button-danger:hover {
+  border-color: #7f1d1d;
+  background: #7f1d1d;
+}
+
 .button-ghost {
   color: var(--muted-foreground);
 }
@@ -819,10 +830,25 @@ textarea.doc-purpose {
   text-align: left;
   border-left-width: 3px;
   border-left-color: var(--border);
+  touch-action: pan-y;
+  transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease, opacity 120ms ease, transform 120ms ease;
 }
 
 .recent-row:hover {
   background: var(--muted);
+}
+
+.recent-row.is-delete-dragging {
+  position: relative;
+  z-index: 5;
+  cursor: grabbing;
+  box-shadow: 0 14px 34px rgb(0 0 0 / 18%);
+  transition: none;
+}
+
+.recent-row.is-delete-ready {
+  border-color: #991b1b;
+  background: #fef2f2;
 }
 
 .recent-row.status-submitted {
@@ -1122,6 +1148,21 @@ textarea.doc-purpose {
   height: 14px;
 }
 
+.status-menu-separator {
+  display: block;
+  height: 1px;
+  margin: 5px 2px;
+  background: var(--border);
+}
+
+.status-menu-option-danger {
+  color: #991b1b;
+}
+
+.status-menu-option-danger:hover {
+  background: #fef2f2;
+}
+
 .document-popover {
   position: fixed;
   z-index: 75;
@@ -1206,6 +1247,58 @@ textarea.doc-purpose {
 
 .modal-recent-row {
   min-height: 48px;
+}
+
+.delete-modal {
+  width: min(460px, 100%);
+}
+
+.delete-modal-body p {
+  margin: 0;
+  color: #27272a;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.delete-modal-body p + p {
+  margin-top: 9px;
+}
+
+.delete-warning {
+  color: #71717a;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.delete-drag-hint {
+  position: fixed;
+  z-index: 90;
+  display: none;
+  min-width: 176px;
+  padding: 8px 10px;
+  border: 1px solid #a1a1aa;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #27272a;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+  font-size: 12px;
+  font-weight: 680;
+  pointer-events: none;
+}
+
+.delete-drag-hint.is-visible {
+  display: block;
+}
+
+.delete-drag-hint.is-ready {
+  border-color: #991b1b;
+  background: #991b1b;
+  color: #ffffff;
 }
 
 .onboarding-backdrop {
