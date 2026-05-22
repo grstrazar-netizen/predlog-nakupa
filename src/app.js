@@ -255,13 +255,9 @@ function renderOnboardingWelcome() {
     <div class="onboarding-backdrop" role="presentation">
       <section class="onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
         <form data-onboarding-welcome-form>
-          <div class="onboarding-kicker">Pametna predloga</div>
-          <h2 class="onboarding-title" id="onboarding-title">Pozdravljen/a, vodja laba.</h2>
+          <h2 class="onboarding-title" id="onboarding-title">Živjo, nekdo, ki bi rad, da se kaj zgodi samo od sebe.</h2>
           <p class="onboarding-copy">
-            Ali vodja projektov. V glavnem nekdo, ki bi rad, da papirologija danes naredi vsaj en počep sama od sebe.
-          </p>
-          <p class="onboarding-copy">
-            Najprej vnesi naziv laba ali oddelka. Iz tega naredim kratico za interno serijsko številko.
+            Za začetek mi povej, kako se imenuje tvoj lab ali oddelek, da bo obema lažje.
           </p>
 
           <label class="onboarding-label" for="onboardingLabName">Naziv laba ali oddelka</label>
@@ -277,13 +273,6 @@ function renderOnboardingWelcome() {
           <div class="onboarding-code-preview">
             <span>Interna kratica</span>
             <strong data-onboarding-code-preview>${escapeHtml(state.onboarding.labCodePreview || DEFAULTS.labCode)}</strong>
-          </div>
-
-          <div class="onboarding-examples" aria-label="Primeri kratic">
-            <span>Kovinarski lab -> KOV</span>
-            <span>Lesarski lab -> LES</span>
-            <span>Lab za nakit -> NAK</span>
-            <span>Lab za tekstil -> TEK</span>
           </div>
 
           <div class="onboarding-actions">
@@ -873,7 +862,13 @@ function handleOnboardingAction(action) {
     return;
   }
 
-  if (action === "skip" || action === "finish") {
+  if (action === "skip") {
+    if (state.onboarding.stage === "welcome") assignRandomLabCode();
+    showStorageWarningStep();
+    return;
+  }
+
+  if (action === "finish") {
     showStorageWarningStep();
     return;
   }
@@ -892,6 +887,19 @@ function handleOnboardingAction(action) {
       render();
     }
   }
+}
+
+function randomLabCode() {
+  const alphabet = "ABCDEFGHJKLMNPRSTUVZ";
+  const values = crypto.getRandomValues(new Uint8Array(3));
+  return Array.from(values, (value) => alphabet[value % alphabet.length]).join("");
+}
+
+function assignRandomLabCode() {
+  const labCode = normalizeLabCode(randomLabCode());
+  state.current.labCode = labCode;
+  state.onboarding.labCodePreview = labCode;
+  markDirty();
 }
 
 function showStorageWarningStep() {

@@ -1222,15 +1222,6 @@ textarea.doc-purpose {
   box-shadow: 0 24px 60px rgb(0 0 0 / 24%);
 }
 
-.onboarding-kicker {
-  margin-bottom: 10px;
-  color: var(--muted-foreground);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .onboarding-title {
   margin: 0 0 10px;
   font-size: 22px;
@@ -1291,22 +1282,6 @@ textarea.doc-purpose {
   font-size: 16px;
   font-weight: 760;
   letter-spacing: 0.03em;
-}
-
-.onboarding-examples {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.onboarding-examples span {
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: #ffffff;
-  color: var(--muted-foreground);
-  font-size: 11px;
 }
 
 .onboarding-actions,
