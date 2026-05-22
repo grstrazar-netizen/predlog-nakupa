@@ -1382,6 +1382,29 @@ textarea.doc-purpose {
   line-height: 1.5;
 }
 
+.onboarding-copy-muted {
+  color: #71717a;
+  font-size: 12px;
+}
+
+.onboarding-steps-list {
+  display: grid;
+  gap: 9px;
+  margin: 14px 0;
+  padding-left: 20px;
+  color: #27272a;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.onboarding-steps-list li::marker {
+  font-weight: 760;
+}
+
+.onboarding-shortcut-modal {
+  width: min(600px, 100%);
+}
+
 .onboarding-label {
   display: block;
   margin: 18px 0 6px;

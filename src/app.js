@@ -299,6 +299,7 @@ function renderOnboarding() {
   if (state.onboarding.stage === "welcome") return renderOnboardingWelcome();
   if (state.onboarding.stage === "tour") return renderOnboardingTour();
   if (state.onboarding.stage === "storage-warning") return renderOnboardingStorageWarning();
+  if (state.onboarding.stage === "install-shortcut") return renderOnboardingInstallShortcut();
   return "";
 }
 
@@ -386,6 +387,32 @@ function renderOnboardingStorageWarning() {
         </div>
       </div>
     </aside>
+  `;
+}
+
+function renderOnboardingInstallShortcut() {
+  return `
+    <div class="onboarding-backdrop" role="presentation">
+      <section class="onboarding-modal onboarding-shortcut-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-shortcut-title">
+        <h2 class="onboarding-title" id="onboarding-shortcut-title">Še zadnji trik: naredi si bližnjico</h2>
+        <p class="onboarding-copy">
+          Če bo app živel samo kot zavihek med šestnajstimi drugimi zavihki, se bo nekega dne skril ravno takrat, ko ga rabiš.
+          Na PC-ju v Chromu ga lahko namestiš kot majhno namizno aplikacijo.
+        </p>
+        <ol class="onboarding-steps-list">
+          <li>Odpri aplikacijo v Google Chromu.</li>
+          <li>Če se desno v naslovni vrstici pokaže ikona za namestitev, klikni <strong>Namesti</strong>.</li>
+          <li>Če ikone ni: klikni <strong>tri pikice</strong> zgoraj desno, nato <strong>Shrani in deli</strong> oziroma <strong>Cast, save, and share</strong>, potem <strong>Namesti stran kot aplikacijo</strong>.</li>
+          <li>Potrdi namestitev. Aplikacija se pokaže v Start meniju, lahko pa jo pripneš tudi v opravilno vrstico.</li>
+        </ol>
+        <p class="onboarding-copy onboarding-copy-muted">
+          Če želiš kasneje ročno dodati bližnjico na namizje, v Chromu odpri <strong>chrome://apps</strong>, z desnim klikom izberi app in nato <strong>Ustvari bližnjico</strong>.
+        </p>
+        <div class="onboarding-actions">
+          <button class="button button-solid" type="button" data-onboarding-action="finish-onboarding">Razumem, gremo delat</button>
+        </div>
+      </section>
+    </div>
   `;
 }
 
@@ -982,6 +1009,11 @@ function handleOnboardingAction(action) {
   stopOnboardingCalculatorDemo({ restore: true });
 
   if (action === "confirm-storage") {
+    showInstallShortcutStep();
+    return;
+  }
+
+  if (action === "finish-onboarding") {
     finishOnboarding();
     return;
   }
@@ -1032,6 +1064,15 @@ function showStorageWarningStep() {
     ...state.onboarding,
     active: true,
     stage: "storage-warning"
+  };
+  render();
+}
+
+function showInstallShortcutStep() {
+  state.onboarding = {
+    ...state.onboarding,
+    active: true,
+    stage: "install-shortcut"
   };
   render();
 }
