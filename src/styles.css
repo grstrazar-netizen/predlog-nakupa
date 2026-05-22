@@ -662,6 +662,12 @@ textarea.doc-purpose {
   color: var(--foreground);
 }
 
+.metric-value-wrap {
+  position: relative;
+  display: inline-flex;
+  justify-content: flex-end;
+}
+
 .metric-value-private {
   display: inline-block;
   outline: none;
@@ -671,10 +677,122 @@ textarea.doc-purpose {
   user-select: none;
 }
 
+.metric-value-wrap:hover .metric-value-private,
 .metric-value-private:hover,
 .metric-value-private:focus-visible {
   filter: blur(0);
   user-select: text;
+}
+
+.spending-breakdown-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  z-index: 85;
+  display: flex;
+  width: min(320px, calc(100vw - 32px));
+  max-height: 300px;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 16px 42px rgb(0 0 0 / 16%);
+  color: var(--foreground);
+  opacity: 0;
+  overflow: visible;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
+  visibility: hidden;
+}
+
+.metric-value-wrap:hover .spending-breakdown-popover,
+.metric-value-wrap:focus-within .spending-breakdown-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.spending-breakdown-popover::before {
+  position: absolute;
+  top: -6px;
+  right: 22px;
+  width: 10px;
+  height: 10px;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  background: #ffffff;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.spending-breakdown-head,
+.spending-breakdown-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.spending-breakdown-head {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.spending-breakdown-head strong {
+  color: var(--foreground);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.spending-breakdown-list {
+  display: flex;
+  max-height: 220px;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.spending-breakdown-row {
+  min-width: 0;
+}
+
+.spending-breakdown-label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.spending-breakdown-label strong {
+  overflow: hidden;
+  max-width: 188px;
+  font-size: 12px;
+  font-weight: 680;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spending-breakdown-label span,
+.spending-breakdown-empty {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.spending-breakdown-value {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .file-row,

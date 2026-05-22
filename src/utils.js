@@ -386,6 +386,23 @@ export function spendingForYear(proposals, year) {
     .reduce((sum, proposal) => sum + Number(proposal.estimatedValueCents || 0), 0);
 }
 
+export function spendingBreakdownForYear(proposals, year) {
+  const groups = new Map();
+
+  proposals
+    .filter((proposal) => Number(proposal.year) === Number(year) && proposal.documentStatus !== "rejected")
+    .forEach((proposal) => {
+      const label = String(proposal.purpose || "").trim().replace(/\s+/g, " ") || "Brez vnesenega namena";
+      const key = label.toLocaleLowerCase("sl-SI");
+      const current = groups.get(key) || { label, cents: 0, count: 0 };
+      current.cents += Number(proposal.estimatedValueCents || 0);
+      current.count += 1;
+      groups.set(key, current);
+    });
+
+  return [...groups.values()].sort((a, b) => b.cents - a.cents || a.label.localeCompare(b.label, "sl-SI"));
+}
+
 export function uniqueSuggestions(proposals, field, currentValue = "") {
   const lower = String(currentValue || "").trim().toLowerCase();
   const values = proposals

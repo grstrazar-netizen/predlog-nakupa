@@ -9,6 +9,7 @@ import {
   nextSerial,
   normalizeLabCode,
   parseMoneyToCents,
+  spendingBreakdownForYear,
   spendingForYear,
   uniqueSuggestions
 } from "../src/utils.js";
@@ -88,6 +89,21 @@ test("sums saved documents by year", () => {
   ];
   assert.equal(spendingForYear(proposals, 2026), 19800);
   assert.equal(formatCurrency(19800), "198,00 €");
+});
+
+test("breaks yearly spending down by purpose and excludes rejected proposals", () => {
+  const proposals = [
+    { year: 2026, purpose: "Kovinarski lab", estimatedValueCents: 10000 },
+    { year: 2026, purpose: " kovinarski  lab ", estimatedValueCents: 2500 },
+    { year: 2026, purpose: "Lab za nakit", estimatedValueCents: 4200 },
+    { year: 2026, purpose: "Kovinarski lab", estimatedValueCents: 9900, documentStatus: "rejected" },
+    { year: 2025, purpose: "Kovinarski lab", estimatedValueCents: 3000 }
+  ];
+
+  assert.deepEqual(spendingBreakdownForYear(proposals, 2026), [
+    { label: "Kovinarski lab", cents: 12500, count: 2 },
+    { label: "Lab za nakit", cents: 4200, count: 1 }
+  ]);
 });
 
 test("derives unique autocomplete suggestions from documents", () => {

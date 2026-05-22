@@ -12,6 +12,7 @@ import {
   proposalWithSaveMetadata,
   safeFileName,
   sortRecent,
+  spendingBreakdownForYear,
   spendingForYear,
   uniqueSuggestions,
   yearFromDate
@@ -204,6 +205,43 @@ function renderDocumentPopover() {
   `;
 }
 
+function proposalCountLabel(count) {
+  if (count === 1) return "1 predlog";
+  if (count === 2) return "2 predloga";
+  if (count === 3 || count === 4) return `${count} predlogi`;
+  return `${count} predlogov`;
+}
+
+function renderSpendingBreakdown(breakdown, totalCents) {
+  if (!breakdown.length) {
+    return `
+      <span class="spending-breakdown-empty">Ni še shranjenih predlogov za to leto.</span>
+    `;
+  }
+
+  return `
+    <span class="spending-breakdown-head">
+      <span>Razčlenitev po potrebah</span>
+      <strong>${formatCurrency(totalCents)}</strong>
+    </span>
+    <span class="spending-breakdown-list">
+      ${breakdown
+        .map(
+          (item) => `
+            <span class="spending-breakdown-row">
+              <span class="spending-breakdown-label">
+                <strong>${escapeHtml(item.label)}</strong>
+                <span>${proposalCountLabel(item.count)}</span>
+              </span>
+              <span class="spending-breakdown-value">${formatCurrency(item.cents)}</span>
+            </span>
+          `
+        )
+        .join("")}
+    </span>
+  `;
+}
+
 function renderOnboarding() {
   if (!state.onboarding.active) return "";
   if (state.onboarding.stage === "welcome") return renderOnboardingWelcome();
@@ -344,6 +382,7 @@ function render() {
   const recent = allRecent.slice(0, 5);
   const hasMoreHistory = allRecent.length > 5;
   const yearlySpending = spendingForYear(state.proposals, currentYear);
+  const yearlySpendingBreakdown = spendingBreakdownForYear(state.proposals, currentYear);
   const attachment = state.attachment;
   const disabledAttr = state.busy ? "disabled" : "";
   const attachmentDetail = attachment?.mimeType?.startsWith("image/")
@@ -503,12 +542,18 @@ function render() {
                   <span class="metric-label">Vsota oddanih predlogov</span>
                   <span class="metric-note">Brez zavrnjenih predlogov</span>
                 </span>
-                <strong
-                  class="metric-value metric-value-private"
-                  tabindex="0"
-                  aria-label="Letna poraba brez zavrnjenih predlogov ${formatCurrency(yearlySpending)}"
-                  title="Premakni miško čez znesek za prikaz"
-                >${formatCurrency(yearlySpending)}</strong>
+                <span class="metric-value-wrap">
+                  <strong
+                    class="metric-value metric-value-private"
+                    tabindex="0"
+                    aria-describedby="spendingBreakdown"
+                    aria-label="Letna poraba brez zavrnjenih predlogov ${formatCurrency(yearlySpending)}"
+                    title="Premakni miško čez znesek za prikaz razčlenitve"
+                  >${formatCurrency(yearlySpending)}</strong>
+                  <span class="spending-breakdown-popover" id="spendingBreakdown" role="tooltip">
+                    ${renderSpendingBreakdown(yearlySpendingBreakdown, yearlySpending)}
+                  </span>
+                </span>
               </div>
               <div class="separator"></div>
               <div class="history-head">
