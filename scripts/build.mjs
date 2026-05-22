@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 const outputDir = "dist";
 const files = ["index.html", "manifest.webmanifest", "service-worker.js", "icon.svg"];
-const directories = ["assets", "src", "vendor"];
+const directories = ["assets", "src"];
 
 async function assertExists(path) {
   await stat(path);

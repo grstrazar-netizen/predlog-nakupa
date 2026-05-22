@@ -1,4 +1,4 @@
-const CACHE_NAME = "predlog-nakupa-v36";
+const CACHE_NAME = "predlog-nakupa-v37";
 const ASSETS = [
   "/",
   "/index.html",
@@ -7,12 +7,16 @@ const ASSETS = [
   "/src/pdf.js",
   "/src/utils.js",
   "/src/styles.css",
-  "/vendor/pdf-lib.min.js",
-  "/vendor/lucide.min.js",
   "/manifest.webmanifest",
   "/icon.svg",
   "/assets/center-rog-logo.svg"
 ];
+
+const CACHEABLE_ORIGINS = new Set([
+  self.location.origin,
+  "https://cdn.jsdelivr.net",
+  "https://unpkg.com"
+]);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
@@ -41,7 +45,7 @@ async function handleFetch(request) {
 
   try {
     const response = await fetch(request);
-    if (response.ok) {
+    if (response.ok || response.type === "opaque") {
       const cache = await caches.open(CACHE_NAME);
       cache.put(request, response.clone());
     }
@@ -54,6 +58,6 @@ async function handleFetch(request) {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
-  if (url.origin !== self.location.origin) return;
+  if (!CACHEABLE_ORIGINS.has(url.origin)) return;
   event.respondWith(handleFetch(event.request));
 });

@@ -57,4 +57,4 @@ Aplikacija je namenoma brez backend strežnika. Dokumenti, priponke in zgodovina
 
 ## Opomba o stacku
 
-Projekt je samostojen no-build PWA brez frontend bundlerja. `npm` skripte služijo za preverjanje, pripravo `dist/` mape in lokalni preview. UI uporablja shadcn/Tailwind oblikovno logiko prek lokalnih CSS tokenov, `pdf-lib` in `lucide` sta vendorizirana lokalno v `vendor/`.
+Projekt je samostojen no-build PWA brez frontend bundlerja. `npm` skripte služijo za preverjanje, pripravo `dist/` mape in lokalni preview. UI uporablja shadcn/Tailwind oblikovno logiko prek lokalnih CSS tokenov. `pdf-lib` in `lucide` se nalagata prek fiksno verzioniranih CDN povezav, service worker pa ju po prvem obisku shrani v cache.
