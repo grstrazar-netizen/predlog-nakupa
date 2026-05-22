@@ -61,7 +61,7 @@ let suppressedRecentClickId = "";
 const ONBOARDING_STORAGE_KEY = "predlog-nakupa:onboarding-complete:v1";
 const DOCUMENT_POPOVER_HOVER_DELAY_MS = 1000;
 const RECENT_DELETE_DRAG_DISTANCE = 92;
-const ONBOARDING_CALCULATOR_DEMO_TEXT = "- slušalke 2*230 eur\n- čelada 60 eur\n- popust 100 - 10% eur";
+const ONBOARDING_CALCULATOR_DEMO_TEXT = "- slušalke 2*230 EUR\n- čelada 60 EUR\n- popust 100 - 10% EUR";
 const DOCUMENT_STATUS_OPTIONS = [
   { value: "", label: "Brez statusa", className: "none" },
   { value: "submitted", label: "Oddano", className: "submitted" },
@@ -78,15 +78,15 @@ const ONBOARDING_STEPS = [
   {
     target: ".explanation-notes",
     demo: "calculator",
-    title: "Opis zna biti mali kalkulator",
+    title: "Opis lahko deluje kot mali kalkulator",
     body:
-      "V obrazložitev lahko napišeš 2*230 eur, 100 - 10% eur ali (3*100+6) eur. Polje zna seštevati, odštevati, množiti, deliti in računati popuste, seštevek pa se prenese spodaj. Mini primer se zdaj vpiše kar sam, seveda pa lahko seštevek vedno popraviš ročno."
+      "V obrazložitev lahko napišeš 2*230 EUR, 100 - 10% EUR ali (3*100+6) EUR. Polje zna seštevati, odštevati, množiti, deliti in računati popuste, seštevek pa se prenese spodaj. Kratek primer se vpiše samodejno, seveda pa lahko seštevek vedno popraviš ročno."
   },
   {
     target: "#company",
-    title: "Podjetja si zapomni",
+    title: "Podjetja si zapomni samodejno",
     body:
-      "Ko enkrat vneseš podjetje, ga bo aplikacija naslednjič ponudila kot autocomplete. Prvi vnos naj bo zato čim bolj pravilen, ker si ga bo pridno zapomnila."
+      "Ko enkrat vneseš podjetje, ga bo aplikacija naslednjič ponudila kot predlog za samodejno dopolnjevanje. Prvi vnos naj bo zato čim bolj pravilen, ker si ga bo zapomnila."
   },
   {
     target: ".date-field",
@@ -96,15 +96,15 @@ const ONBOARDING_STEPS = [
   },
   {
     target: "[data-offer-dropzone]",
-    title: "Ponudba gre zraven dokumenta",
+    title: "Ponudba gre skupaj z dokumentom",
     body:
-      "Sem lahko povlečeš ponudbo kot PDF ali sliko. Pri izvozu se doda za obrazec, zato ima direktorica podpisni list in ponudbo v enem PDF-ju."
+      "Sem lahko povlečeš ponudbo v obliki datoteke PDF ali slike. Pri izvozu se doda za obrazec, zato ima direktorica podpisni list in ponudbo v enem dokumentu PDF."
   },
   {
     target: ".history-head",
     title: "Zadnji predlogi in statusi",
     body:
-      "Tu se pokaže zadnjih pet izdanih predlogov. Dokument lahko kategoriziraš z desnim klikom na vrstico, na telefonu pa tapni majhno statusno piko ob številki."
+      "Tu se pokaže zadnjih pet izdanih predlogov. Dokument lahko kategoriziraš z desnim klikom miške na vrstico, na telefonu pa se dotakni majhne statusne pike ob številki."
   },
   {
     target: ".metric",
@@ -246,7 +246,7 @@ function renderDeleteConfirm() {
           <p>
             Predlog <strong>${escapeHtml(serial)}</strong> za <strong>${escapeHtml(company)}</strong> bo odstranjen iz lokalne evidence in letnega seštevka.
           </p>
-          <p class="delete-warning">Tega ni mogoče razveljaviti. PDF-ji, ki so že preneseni ali natisnjeni zunaj aplikacije, se seveda ne izbrišejo.</p>
+          <p class="delete-warning">Tega ni mogoče razveljaviti. Datoteke PDF, ki so že prenesene ali natisnjene zunaj aplikacije, se seveda ne izbrišejo.</p>
           <div class="modal-actions">
             <button class="button button-outline" type="button" data-action="cancel-delete">Prekliči</button>
             <button class="button button-solid button-danger" type="button" data-action="confirm-delete">Izbriši predlog</button>
@@ -372,14 +372,14 @@ function renderOnboardingStorageWarning() {
     <aside class="onboarding-storage-warning" role="status" aria-live="polite">
       <div class="onboarding-storage-icon">${icon("triangle-alert")}</div>
       <div class="onboarding-storage-content">
-        <h2 class="onboarding-storage-title">Pomembno: ta app si zapomni stvari lokalno</h2>
+        <h2 class="onboarding-storage-title">Pomembno: ta aplikacija si stvari zapomni lokalno</h2>
         <p>
-          Dokumenti, serijske številke, pripete ponudbe in predlogi za autocomplete se shranjujejo v tem brskalniku na tem računalniku.
+          Dokumenti, serijske številke, pripete ponudbe in predlogi za samodejno dopolnjevanje se shranjujejo v tem brskalniku na tem računalniku.
         </p>
         <ul>
           <li>Za isto evidenco uporabljaj isti računalnik, isti brskalnik in isti uporabniški profil.</li>
-          <li>Ne briši podatkov strani oziroma zgodovine/cache/site data za to aplikacijo, ker se lahko izbrišejo tudi shranjeni predlogi in ponudbe.</li>
-          <li>To ni skupna baza in nima samodejne varnostne kopije. Za uradni arhiv vedno prenesi PDF in ga shrani na dogovorjeno mesto.</li>
+          <li>Ne briši podatkov strani, zgodovine brskanja, predpomnilnika ali podatkov spletnega mesta za to aplikacijo, ker se lahko izbrišejo tudi shranjeni predlogi in ponudbe.</li>
+          <li>To ni skupna baza in nima samodejne varnostne kopije. Za uradni arhiv vedno prenesi dokument PDF in ga shrani na dogovorjeno mesto.</li>
           <li>Če računalnik uporablja več oseb, upoštevaj, da so lokalno shranjeni dokumenti vidni v istem brskalniškem profilu.</li>
         </ul>
         <div class="onboarding-storage-actions">
@@ -396,20 +396,20 @@ function renderOnboardingInstallShortcut() {
       <section class="onboarding-modal onboarding-shortcut-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-shortcut-title">
         <h2 class="onboarding-title" id="onboarding-shortcut-title">Še zadnji trik: naredi si bližnjico</h2>
         <p class="onboarding-copy">
-          Če bo app živel samo kot zavihek med šestnajstimi drugimi zavihki, se bo nekega dne skril ravno takrat, ko ga rabiš.
-          Na PC-ju v Chromu ga lahko namestiš kot majhno namizno aplikacijo.
+          Če bo aplikacija živela samo kot zavihek med šestnajstimi drugimi zavihki, se bo nekega dne skrila ravno takrat, ko jo rabiš.
+          Na računalniku z operacijskim sistemom Windows jo lahko v Chromu namestiš kot majhno namizno aplikacijo.
         </p>
         <ol class="onboarding-steps-list">
           <li>Odpri aplikacijo v Google Chromu.</li>
           <li>Če se desno v naslovni vrstici pokaže ikona za namestitev, klikni <strong>Namesti</strong>.</li>
           <li>Če ikone ni: klikni <strong>tri pikice</strong> zgoraj desno, nato <strong>Shrani in deli</strong> oziroma <strong>Cast, save, and share</strong>, potem <strong>Namesti stran kot aplikacijo</strong>.</li>
-          <li>Potrdi namestitev. Aplikacija se pokaže v Start meniju, lahko pa jo pripneš tudi v opravilno vrstico.</li>
+          <li>Potrdi namestitev. Aplikacija se pokaže v meniju Start, lahko pa jo pripneš tudi v opravilno vrstico.</li>
         </ol>
         <p class="onboarding-copy onboarding-copy-muted">
-          Če želiš kasneje ročno dodati bližnjico na namizje, v Chromu odpri <strong>chrome://apps</strong>, z desnim klikom izberi app in nato <strong>Ustvari bližnjico</strong>.
+          Če želiš kasneje ročno dodati bližnjico na namizje, v Chromu odpri <strong>chrome://apps</strong>, z desnim klikom izberi aplikacijo in nato <strong>Ustvari bližnjico</strong>.
         </p>
         <div class="onboarding-actions">
-          <button class="button button-solid" type="button" data-onboarding-action="finish-onboarding">Razumem, gremo delat</button>
+          <button class="button button-solid" type="button" data-onboarding-action="finish-onboarding">Razumem, začnimo</button>
         </div>
       </section>
     </div>
@@ -506,10 +506,10 @@ function render() {
   const disabledAttr = state.busy ? "disabled" : "";
   const saveState = documentSaveState();
   const attachmentDetail = attachment?.mimeType?.startsWith("image/")
-    ? "Priložena slika se ob izvozu doda kot dodatna stran v PDF."
-    : "Priloženo k PDF izvozu";
+    ? "Priložena slika se ob izvozu doda kot dodatna stran v dokumentu PDF."
+    : "Priloženo k izvozu v PDF";
   const dropzoneTitle = attachment ? "Spusti datoteko za zamenjavo" : "Povleci datoteko sem";
-  const dropzoneHint = "PDF ali slika (PNG, JPG, WEBP ...), ali klikni za izbor.";
+  const dropzoneHint = "Datoteka PDF ali slika (PNG, JPG, WEBP ...), lahko pa klikneš za izbor.";
 
   root.innerHTML = `
     <main class="app-shell">
@@ -577,7 +577,7 @@ function render() {
             <div class="doc-block">
               <p class="doc-block-label explanation-label">Opis / obrazložitev potrebe:</p>
               <span class="smart-field">
-                <textarea class="doc-textarea explanation-notes" data-field="explanation" data-smart-field="explanation" rows="6" aria-label="Opis oziroma obrazložitev potrebe" placeholder="- slušalke 2*230 eur&#10;- čelada 60 eur&#10;- popust 100 - 10% eur">${escapeHtml(state.current.explanation)}</textarea>
+                <textarea class="doc-textarea explanation-notes" data-field="explanation" data-smart-field="explanation" rows="6" aria-label="Opis oziroma obrazložitev potrebe" placeholder="- slušalke 2*230 EUR&#10;- čelada 60 EUR&#10;- popust 100 - 10% EUR">${escapeHtml(state.current.explanation)}</textarea>
               </span>
             </div>
 
@@ -645,7 +645,7 @@ function render() {
                       </div>
                       <button class="button button-icon-only button-ghost" type="button" data-action="remove-attachment" aria-label="Odstrani ponudbo">${icon("x")}</button>
                     </div>`
-                  : `<p class="empty-text">Ponudba še ni pripeta. Povleci PDF ali sliko v spodnje polje.</p>`
+                  : `<p class="empty-text">Ponudba še ni pripeta. Povleci datoteko PDF ali sliko v spodnje polje.</p>`
               }
               <button class="offer-dropzone${state.busy ? " is-disabled" : ""}" type="button" data-action="attach" data-offer-dropzone aria-label="Povleci in spusti ponudbo ali klikni za izbor datoteke" data-busy-sensitive ${disabledAttr}>
                 <span class="offer-drop-title">${icon("upload")} ${escapeHtml(dropzoneTitle)}</span>
@@ -765,7 +765,7 @@ function render() {
       ${renderStatusMenu()}
       ${renderDocumentPopover()}
       ${renderDeleteConfirm()}
-      <div class="delete-drag-hint" data-delete-drag-hint aria-hidden="true">Povleci ven iz kartice</div>
+      <div class="delete-drag-hint" data-delete-drag-hint aria-hidden="true">Povleci iz kartice</div>
       ${renderOnboarding()}
     </main>
   `;
@@ -1434,7 +1434,7 @@ function updateDeleteDragHint(event, ready) {
   const hint = deleteDragHint();
   if (!hint) return;
 
-  hint.textContent = ready ? "Spusti za brisanje" : "Povleci ven iz kartice";
+  hint.textContent = ready ? "Spusti za brisanje" : "Povleci iz kartice";
   hint.classList.add("is-visible");
   hint.classList.toggle("is-ready", ready);
   hint.style.left = `${Math.round(clamp(event.clientX - 88, 12, window.innerWidth - 188))}px`;
@@ -1649,7 +1649,7 @@ function getOfferKind(file) {
 async function attachOfferFile(file) {
   const offerKind = getOfferKind(file);
   if (!offerKind) {
-    throw new Error("Pripni PDF ali slikovno datoteko.");
+    throw new Error("Pripni datoteko PDF ali slikovno datoteko.");
   }
 
   if (!state.current.id) {
@@ -1700,15 +1700,15 @@ async function exportPdf(mode) {
       const printWindow = window.open(url, "_blank");
       if (!printWindow) {
         downloadBlob(pdfBlob, fileName);
-        showToast("Brskalnik je blokiral tiskanje, zato sem PDF prenesel.");
+        showToast("Brskalnik je blokiral tiskanje, zato sem prenesel dokument PDF.");
       } else {
         printWindow.addEventListener("load", () => printWindow.print(), { once: true });
         window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        showToast("PDF je pripravljen za tiskanje.");
+        showToast("Dokument PDF je pripravljen za tiskanje.");
       }
     } else {
       downloadBlob(pdfBlob, fileName);
-      showToast("PDF je pripravljen za prenos.");
+      showToast("Dokument PDF je pripravljen za prenos.");
     }
   } finally {
     setBusy(false);

@@ -175,7 +175,7 @@ async function imageBlobToPngBytes(blob) {
 
   const pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
   if (!pngBlob) {
-    throw new Error("Priložene slike ni bilo mogoče pretvoriti v PDF.");
+    throw new Error("Priložene slike ni bilo mogoče pretvoriti v dokument PDF.");
   }
 
   return new Uint8Array(await pngBlob.arrayBuffer());
@@ -383,7 +383,7 @@ export async function createCombinedPdfBlob(proposal, attachment) {
     } else if (attachmentKind === "image") {
       await appendImageAttachmentPage(pdf, attachment);
     } else {
-      throw new Error("Pripeta datoteka mora biti PDF ali slika.");
+      throw new Error("Pripeta datoteka mora biti datoteka PDF ali slika.");
     }
   }
 

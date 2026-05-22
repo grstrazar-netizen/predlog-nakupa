@@ -1,6 +1,6 @@
-# Predlog Nakupa Drobnega Materiala
+# Predlog nakupa drobnega materiala
 
-Document-first lokalna PWA aplikacija za izdajo obrazca **Predlog nakupa drobnega materiala**.
+Dokumentno usmerjena lokalna progresivna spletna aplikacija za izdajo obrazca **Predlog nakupa drobnega materiala**.
 
 ## Zagon
 
@@ -20,13 +20,13 @@ npm run preview
 
 `npm run build` pripravi mapo `dist/`, ki vsebuje samo javne datoteke aplikacije. To je mapa, ki se objavi na Vercelu.
 
-## Objava na Vercel
+## Objava na Vercelu
 
 Projekt je pripravljen za Vercel prek `vercel.json`:
 
 - Build command: `npm run verify && npm run build`
 - Output directory: `dist`
-- Framework preset: brez frameworka oziroma `Other`
+- Framework preset: brez ogrodja oziroma `Other`
 
 Najlažja pot:
 
@@ -36,25 +36,25 @@ vercel
 vercel --prod
 ```
 
-Če povežeš GitHub repo z Vercelom, Vercel sam uporabi `vercel.json` in naredi preview deploye za branche ter produkcijski deploy za glavno vejo.
+Če povežeš repozitorij GitHub z Vercelom, Vercel sam uporabi `vercel.json` ter pripravi predogledne objave za veje in produkcijsko objavo za glavno vejo.
 
 ## Kaj dela
 
 - ustvari A4 dokument, ki sledi obstoječemu ODT obrazcu,
 - shrani dokumente lokalno v IndexedDB,
 - generira številko v obliki `KOV-2026-001`,
-- pomni prejšnja podjetja, namene in obrazložitve za autocomplete,
-- uporablja fiksni Center Rog wordmark na dokumentu,
-- pripne eno PDF ponudbo k dokumentu,
-- izvozi ali natisne združen PDF: obrazec najprej, ponudba kot dodatne strani,
-- prikaže miren povzetek letne porabe iz shranjenih dokumentov,
+- pomni prejšnja podjetja, namene in obrazložitve za samodejno dopolnjevanje,
+- uporablja fiksni logotip Centra Rog na dokumentu,
+- pripne eno ponudbo v obliki datoteke PDF ali slike k dokumentu,
+- izvozi ali natisne združen dokument PDF: obrazec najprej, ponudba kot dodatne strani,
+- prikaže umirjen povzetek letne porabe iz shranjenih dokumentov,
 - samodejno sešteje EUR zneske iz alinej v obrazložitvi in jih vpiše kot okvirno vrednost,
 - loči interno številko dokumenta od računovodske vrstice `Št.: 2026- ____`.
 
 ## Podatki
 
-Aplikacija je namenoma brez backend strežnika. Dokumenti, priponke in zgodovina porabe se shranjujejo v IndexedDB v brskalniku uporabnika. To pomeni, da Vercel objava ne ustvari skupne baze za vse vodje labov; vsak brskalnik ima svojo lokalno evidenco.
+Aplikacija je namenoma brez zalednega strežnika. Dokumenti, priponke in zgodovina porabe se shranjujejo v IndexedDB v brskalniku uporabnika. To pomeni, da objava na Vercelu ne ustvari skupne baze za vse vodje labov; vsak brskalnik ima svojo lokalno evidenco.
 
-## Opomba o stacku
+## Opomba o tehnologiji
 
-Projekt je samostojen no-build PWA brez frontend bundlerja. `npm` skripte služijo za preverjanje, pripravo `dist/` mape in lokalni preview. UI uporablja shadcn/Tailwind oblikovno logiko prek lokalnih CSS tokenov. `pdf-lib` in `lucide` se nalagata prek fiksno verzioniranih CDN povezav, service worker pa ju po prvem obisku shrani v cache.
+Projekt je samostojna progresivna spletna aplikacija brez klasičnega gradnika za uporabniški vmesnik. Skripte `npm` služijo za preverjanje, pripravo mape `dist/` in lokalni predogled. Vmesnik uporablja oblikovno logiko shadcn/Tailwind prek lokalnih žetonov CSS. Knjižnici `pdf-lib` in `lucide` se nalagata prek fiksno verzioniranih povezav CDN, servisni delavec pa ju po prvem obisku shrani v predpomnilnik.

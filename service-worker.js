@@ -1,4 +1,4 @@
-const CACHE_NAME = "predlog-nakupa-v37";
+const CACHE_NAME = "predlog-nakupa-v38";
 const ASSETS = [
   "/",
   "/index.html",
