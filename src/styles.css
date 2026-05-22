@@ -1373,6 +1373,73 @@ textarea.doc-purpose {
   z-index: 99;
 }
 
+.onboarding-storage-warning {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 95;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 12px;
+  width: min(440px, calc(100vw - 32px));
+  padding: 14px;
+  border: 1px solid #d97706;
+  border-radius: 8px;
+  background: #fef3c7;
+  box-shadow: 0 18px 48px rgb(120 53 15 / 22%);
+  color: #422006;
+}
+
+.onboarding-storage-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #d97706;
+  border-radius: 999px;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.onboarding-storage-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.onboarding-storage-content {
+  min-width: 0;
+}
+
+.onboarding-storage-title {
+  margin: 2px 0 7px;
+  font-size: 14px;
+  font-weight: 760;
+  line-height: 1.25;
+}
+
+.onboarding-storage-content p {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.onboarding-storage-content ul {
+  margin: 0;
+  padding-left: 17px;
+}
+
+.onboarding-storage-content li {
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: 1.42;
+}
+
+.onboarding-storage-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
 .toast {
   position: fixed;
   left: 50%;
@@ -1520,6 +1587,20 @@ textarea.doc-purpose {
 
   .onboarding-action-spacer {
     display: none;
+  }
+
+  .onboarding-storage-warning {
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    grid-template-columns: 24px minmax(0, 1fr);
+    padding: 12px;
+  }
+
+  .onboarding-storage-icon {
+    width: 24px;
+    height: 24px;
   }
 
 }

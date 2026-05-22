@@ -246,6 +246,7 @@ function renderOnboarding() {
   if (!state.onboarding.active) return "";
   if (state.onboarding.stage === "welcome") return renderOnboardingWelcome();
   if (state.onboarding.stage === "tour") return renderOnboardingTour();
+  if (state.onboarding.stage === "storage-warning") return renderOnboardingStorageWarning();
   return "";
 }
 
@@ -321,6 +322,29 @@ function renderOnboardingTour() {
         </div>
       </section>
     </div>
+  `;
+}
+
+function renderOnboardingStorageWarning() {
+  return `
+    <aside class="onboarding-storage-warning" role="status" aria-live="polite">
+      <div class="onboarding-storage-icon">${icon("triangle-alert")}</div>
+      <div class="onboarding-storage-content">
+        <h2 class="onboarding-storage-title">Pomembno: ta app si zapomni stvari lokalno</h2>
+        <p>
+          Dokumenti, serijske številke, pripete ponudbe in predlogi za autocomplete se shranjujejo v tem brskalniku na tem računalniku.
+        </p>
+        <ul>
+          <li>Za isto evidenco uporabljaj isti računalnik, isti brskalnik in isti uporabniški profil.</li>
+          <li>Ne briši podatkov strani oziroma zgodovine/cache/site data za to aplikacijo, ker se lahko izbrišejo tudi shranjeni predlogi in ponudbe.</li>
+          <li>To ni skupna baza in nima samodejne varnostne kopije. Za uradni arhiv vedno prenesi PDF in ga shrani na dogovorjeno mesto.</li>
+          <li>Če računalnik uporablja več oseb, upoštevaj, da so lokalno shranjeni dokumenti vidni v istem brskalniškem profilu.</li>
+        </ul>
+        <div class="onboarding-storage-actions">
+          <button class="button button-solid" type="button" data-onboarding-action="confirm-storage">Razumem</button>
+        </div>
+      </div>
+    </aside>
   `;
 }
 
@@ -844,8 +868,13 @@ function bindOnboardingEvents() {
 }
 
 function handleOnboardingAction(action) {
-  if (action === "skip" || action === "finish") {
+  if (action === "confirm-storage") {
     finishOnboarding();
+    return;
+  }
+
+  if (action === "skip" || action === "finish") {
+    showStorageWarningStep();
     return;
   }
 
@@ -858,11 +887,20 @@ function handleOnboardingAction(action) {
   if (action === "next") {
     state.onboarding.step += 1;
     if (state.onboarding.step >= ONBOARDING_STEPS.length) {
-      finishOnboarding();
+      showStorageWarningStep();
     } else {
       render();
     }
   }
+}
+
+function showStorageWarningStep() {
+  state.onboarding = {
+    ...state.onboarding,
+    active: true,
+    stage: "storage-warning"
+  };
+  render();
 }
 
 function startOnboardingTour() {
