@@ -7,7 +7,23 @@ const A4 = {
   heightPx: 1754
 };
 
+const PREVIEW_PAPER = {
+  widthPx: 794,
+  heightPx: 1123,
+  paddingX: 74,
+  paddingY: 68
+};
+
+const PREVIEW_TO_CANVAS = A4.widthPx / PREVIEW_PAPER.widthPx;
 const PDF_FONT = "Arial, Helvetica, sans-serif";
+
+function paperPx(value) {
+  return value * PREVIEW_TO_CANVAS;
+}
+
+function fontPx(value) {
+  return Math.round(paperPx(value));
+}
 
 function drawText(ctx, text, x, y, options = {}) {
   const { size = 28, family = PDF_FONT, weight = "400", style = "normal", align = "left", color = "#111111" } = options;
@@ -30,12 +46,47 @@ function drawLine(ctx, x1, y1, x2, y2, options = {}) {
   ctx.restore();
 }
 
+function drawRoundedRect(ctx, x, y, width, height, options = {}) {
+  const radius = options.radius || 0;
+
+  ctx.save();
+  ctx.beginPath();
+  if (radius > 0 && typeof ctx.roundRect === "function") {
+    ctx.roundRect(x, y, width, height, radius);
+  } else {
+    ctx.rect(x, y, width, height);
+  }
+
+  if (options.fill) {
+    ctx.fillStyle = options.fill;
+    ctx.fill();
+  }
+
+  if (options.stroke) {
+    ctx.strokeStyle = options.stroke;
+    ctx.lineWidth = options.width || 1;
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function measureText(ctx, text, options = {}) {
+  const { size = 28, family = PDF_FONT, weight = "400", style = "normal" } = options;
+  ctx.save();
+  ctx.font = `${style} ${weight} ${size}px ${family}`;
+  const width = ctx.measureText(String(text || "")).width;
+  ctx.restore();
+  return width;
+}
+
 function wrapText(ctx, text, x, y, maxWidth, lineHeight, options = {}) {
   let cursorY = y;
-  ctx.font = `${options.weight || "400"} ${options.size || 28}px ${options.family || PDF_FONT}`;
+  ctx.font = `${options.style || "normal"} ${options.weight || "400"} ${options.size || 28}px ${options.family || PDF_FONT}`;
   ctx.fillStyle = options.color || "#111111";
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
+  const maxY = options.maxY || Infinity;
 
   const paragraphs = String(text || "").split(/\n/);
   if (!paragraphs.some((paragraph) => paragraph.trim())) {
@@ -55,6 +106,7 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight, options = {}) {
     for (const word of words) {
       const testLine = line ? `${line} ${word}` : word;
       if (ctx.measureText(testLine).width > maxWidth && line) {
+        if (cursorY + lineHeight > maxY) return cursorY;
         ctx.fillText(line, x, cursorY);
         line = word;
         cursorY += lineHeight;
@@ -64,6 +116,7 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight, options = {}) {
     }
 
     if (line) {
+      if (cursorY + lineHeight > maxY) return cursorY;
       ctx.fillText(line, x, cursorY);
       cursorY += lineHeight;
     }
@@ -72,18 +125,18 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight, options = {}) {
   return cursorY;
 }
 
-function drawCenterRogLogo(ctx) {
+function drawCenterRogLogo(ctx, x = paperPx(PREVIEW_PAPER.paddingX), y = paperPx(PREVIEW_PAPER.paddingY)) {
   ctx.save();
   ctx.fillStyle = "#111111";
-  ctx.font = `700 34px ${PDF_FONT}`;
+  ctx.font = `700 ${fontPx(22)}px ${PDF_FONT}`;
   ctx.textBaseline = "top";
-  ctx.fillText("Center", 145, 82);
-  ctx.fillText("Rog", 145, 120);
-  ctx.lineWidth = 4;
+  ctx.fillText("Center", x, y + paperPx(5));
+  ctx.fillText("Rog", x, y + paperPx(29));
+  ctx.lineWidth = paperPx(2.5);
   ctx.strokeStyle = "#111111";
   ctx.beginPath();
-  ctx.moveTo(145, 166);
-  ctx.lineTo(250, 166);
+  ctx.moveTo(x, y + paperPx(58));
+  ctx.lineTo(x + paperPx(72), y + paperPx(58));
   ctx.stroke();
   ctx.restore();
 }
@@ -160,8 +213,8 @@ async function appendImageAttachmentPage(pdf, attachment) {
   });
 }
 
-function drawAccountingNumber(ctx, proposal, x, y) {
-  drawText(ctx, `Št.: ${yearFromDate(proposal.issueDate)}- ____`, x, y, { size: 27 });
+function drawAccountingNumber(ctx, proposal, x, y, size = 27) {
+  drawText(ctx, `Št.: ${yearFromDate(proposal.issueDate)}- ____`, x, y, { size, weight: "700" });
 }
 
 async function renderProposalCanvas(proposal) {
@@ -172,72 +225,132 @@ async function renderProposalCanvas(proposal) {
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+  const left = paperPx(PREVIEW_PAPER.paddingX);
+  const right = A4.widthPx - left;
+  const contentWidth = right - left;
+  const bodySize = fontPx(15);
+  const titleSize = fontPx(18);
+  const lineHeight = paperPx(23);
+  const muted = "#52525b";
+
   try {
     const logo = await loadImage("/assets/center-rog-logo.svg");
-    ctx.drawImage(logo, 145, 74, 118, 110);
+    ctx.drawImage(logo, left, paperPx(PREVIEW_PAPER.paddingY), paperPx(84), paperPx(78));
   } catch {
-    drawCenterRogLogo(ctx);
+    drawCenterRogLogo(ctx, left, paperPx(PREVIEW_PAPER.paddingY));
   }
 
-  const left = 145;
-  const right = A4.widthPx - 145;
-  let y = 226;
+  let y = paperPx(151);
 
   drawText(ctx, "PREDLOG NAKUPA DROBNEGA MATERIALA", A4.widthPx / 2, y, {
     align: "center",
-    size: 31,
+    size: titleSize,
     weight: "700"
   });
 
-  y += 92;
-  drawText(ctx, "Ime in priimek:", left, y, { size: 27 });
-  drawText(ctx, proposal.fullName || "", left + 205, y, { size: 27, weight: "700" });
-  y += 54;
-  drawText(ctx, "Zaposlen/a na delovnem mestu:", left, y, { size: 27 });
-  drawText(ctx, proposal.jobTitle || "", left + 405, y, { size: 27, weight: "700" });
+  y = paperPx(215);
+  const nameLabel = "Ime in priimek:";
+  drawText(ctx, nameLabel, left, y, { size: bodySize });
+  drawText(ctx, proposal.fullName || "", left + measureText(ctx, nameLabel, { size: bodySize }) + paperPx(8), y, {
+    size: bodySize,
+    weight: "700"
+  });
 
-  y += 76;
-  drawText(ctx, "Predlagam nakup naslednjega drobnega materiala za potrebe:", left, y, { size: 27 });
+  y += paperPx(38);
+  const jobLabel = "Zaposlen/a na delovnem mestu:";
+  drawText(ctx, jobLabel, left, y, { size: bodySize });
+  drawText(ctx, proposal.jobTitle || "", left + measureText(ctx, jobLabel, { size: bodySize }) + paperPx(8), y, {
+    size: bodySize,
+    weight: "700"
+  });
 
-  y += 52;
-  y = wrapText(ctx, proposal.purpose || "", left, y, right - left, 42, { size: 29, weight: "700" });
+  y += paperPx(62);
+  drawText(ctx, "Predlagam nakup naslednjega drobnega materiala za potrebe:", left, y, { size: bodySize });
 
-  y += 24;
-  y = wrapText(ctx, proposal.explanation || "", left, y, right - left, 39, { size: 27 });
+  y += paperPx(34);
+  const purposeBottom = wrapText(ctx, proposal.purpose || "", left, y, contentWidth, lineHeight, {
+    size: bodySize,
+    weight: "600",
+    maxY: y + paperPx(46)
+  });
+  y = Math.max(y + paperPx(30), purposeBottom) + paperPx(26);
 
-  y += 50;
-  drawText(ctx, `Podjetje: ${proposal.company || ""}`, left, y, { size: 27 });
+  drawText(ctx, "Opis / obrazložitev potrebe:", left, y, { size: bodySize, weight: "700" });
+  const notesY = y + paperPx(29);
+  const notesHeight = paperPx(142);
+  drawRoundedRect(ctx, left, notesY, contentWidth, notesHeight, {
+    radius: paperPx(8),
+    fill: "#fbfbfb",
+    stroke: "#d4d4d8",
+    width: 1
+  });
+  wrapText(ctx, proposal.explanation || "", left + paperPx(14), notesY + paperPx(12), contentWidth - paperPx(28), lineHeight, {
+    size: bodySize,
+    color: muted,
+    maxY: notesY + notesHeight - paperPx(12)
+  });
 
-  y += 78;
+  y = notesY + notesHeight + paperPx(38);
+  const companyLabel = "Podjetje:";
+  drawText(ctx, companyLabel, left, y, { size: bodySize });
+  drawText(ctx, proposal.company || "", left + measureText(ctx, companyLabel, { size: bodySize }) + paperPx(8), y, {
+    size: bodySize
+  });
+
+  y += paperPx(50);
   const value = proposal.estimatedValueCents
     ? (proposal.estimatedValueCents / 100).toLocaleString("sl-SI", {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2
       })
     : "";
-  drawText(ctx, "V okvirni skupni vrednosti: cca", left, y, { size: 27 });
-  drawText(ctx, value, left + 445, y, { size: 27, weight: "700", align: "right" });
-  drawText(ctx, "brez DDV", left + 470, y, { size: 27 });
+  const valueLabel = "V okvirni skupni vrednosti: cca";
+  const valueX = left + measureText(ctx, valueLabel, { size: bodySize }) + paperPx(10) + paperPx(92);
+  drawText(ctx, valueLabel, left, y, { size: bodySize });
+  drawText(ctx, value, valueX, y, { size: bodySize, weight: "700", align: "right" });
+  drawText(ctx, "brez DDV", valueX + paperPx(10), y, { size: bodySize });
 
-  const bottomY = 1296;
-  drawText(ctx, DEFAULTS.city, left, bottomY, { size: 27 });
-  drawText(ctx, formatSlovenianDate(proposal.issueDate), left + 255, bottomY, { size: 27 });
-  drawText(ctx, "Podpis vodje laba", 760, bottomY, { size: 25, weight: "700" });
-  drawLine(ctx, 1000, bottomY + 31, right, bottomY + 31, { dash: [4, 7] });
+  const footerLineY = Math.max(y + paperPx(128), paperPx(820));
+  drawLine(ctx, left, footerLineY, right, footerLineY, { color: "#d4d4d8", width: 1 });
 
-  drawAccountingNumber(ctx, proposal, left, bottomY + 86);
+  const issueY = footerLineY + paperPx(20);
+  drawText(ctx, DEFAULTS.city, left, issueY, { size: bodySize });
+  drawText(ctx, formatSlovenianDate(proposal.issueDate), left + paperPx(168), issueY, { size: bodySize });
+  drawText(ctx, "Podpis vodje laba", left + contentWidth - paperPx(270), issueY, {
+    size: fontPx(14),
+    weight: "700"
+  });
+  drawLine(ctx, left + contentWidth - paperPx(122), issueY + paperPx(24), right, issueY + paperPx(24), { color: "#71717a" });
 
-  drawLine(ctx, left, bottomY + 155, right, bottomY + 155, { width: 1.7 });
-  drawText(ctx, "SOGLAŠAM: DA / NE", left, bottomY + 198, { size: 27, weight: "700" });
+  drawAccountingNumber(ctx, proposal, left, issueY + paperPx(58), bodySize);
 
-  const directorX = 720;
-  const directorY = bottomY + 194;
+  const approvalLineY = issueY + paperPx(116);
+  drawLine(ctx, left, approvalLineY, right, approvalLineY, { width: 1.7 });
+
+  const approvalY = approvalLineY + paperPx(24);
+  drawText(ctx, "SOGLAŠAM", left, approvalY + paperPx(5), { size: bodySize, weight: "700" });
+  drawRoundedRect(ctx, left + paperPx(92), approvalY, paperPx(76), paperPx(31), {
+    radius: paperPx(16),
+    fill: "#ffffff",
+    stroke: "#d4d4d8",
+    width: 1
+  });
+  drawText(ctx, "DA  /  NE", left + paperPx(111), approvalY + paperPx(6), {
+    size: fontPx(14),
+    weight: "700",
+    color: "#27272a"
+  });
+
+  const directorY = approvalY + paperPx(4);
   const directorName = "Renata Zamida, ";
-  drawText(ctx, directorName, directorX, directorY, { size: 25, weight: "600" });
-  const directorRoleX = directorX + ctx.measureText(directorName).width;
-  drawText(ctx, "direktorica", directorRoleX, directorY, { size: 25, style: "italic" });
-  const directorSignatureX = directorRoleX + ctx.measureText("direktorica").width + 26;
-  drawLine(ctx, directorSignatureX, directorY + 31, right, directorY + 31, { dash: [4, 7] });
+  const roleText = "direktorica";
+  const directorNameWidth = measureText(ctx, directorName, { size: bodySize, weight: "600" });
+  const directorRoleWidth = measureText(ctx, roleText, { size: bodySize, style: "italic" });
+  const signatureWidth = paperPx(190);
+  const directorX = right - signatureWidth - paperPx(14) - directorNameWidth - directorRoleWidth;
+  drawText(ctx, directorName, directorX, directorY, { size: bodySize, weight: "600" });
+  drawText(ctx, roleText, directorX + directorNameWidth, directorY, { size: bodySize, style: "italic" });
+  drawLine(ctx, right - signatureWidth, directorY + paperPx(28), right, directorY + paperPx(28), { dash: [4, 7] });
 
   return canvas;
 }
