@@ -5,6 +5,7 @@ import {
   evaluateEuroExpression,
   extractEuroAmounts,
   extractEuroTotalCents,
+  deriveLabCodeFromName,
   nextSerial,
   normalizeLabCode,
   parseMoneyToCents,
@@ -15,6 +16,14 @@ import {
 test("normalizes lab codes for serial numbers", () => {
   assert.equal(normalizeLabCode(" kov "), "KOV");
   assert.equal(normalizeLabCode("lab-01"), "LAB01");
+});
+
+test("derives lab codes from Slovenian lab names", () => {
+  assert.equal(deriveLabCodeFromName("Kovinarski lab"), "KOV");
+  assert.equal(deriveLabCodeFromName("Lesarski lab"), "LES");
+  assert.equal(deriveLabCodeFromName("Lab za nakit"), "NAK");
+  assert.equal(deriveLabCodeFromName("Lab za tekstil"), "TEK");
+  assert.equal(deriveLabCodeFromName("Oddelek za keramiko"), "KER");
 });
 
 test("parses Slovenian money values to cents", () => {

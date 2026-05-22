@@ -2,6 +2,7 @@ import {
   DEFAULTS,
   centsToInputValue,
   createBlankProposal,
+  deriveLabCodeFromName,
   downloadBlob,
   extractEuroTotalCents,
   formatCurrency,
@@ -33,20 +34,73 @@ const state = {
   historyModalOpen: false,
   statusMenu: null,
   documentPopover: null,
+  onboarding: {
+    active: false,
+    stage: "",
+    step: 0,
+    labName: "",
+    labCodePreview: DEFAULTS.labCode
+  },
   dirty: false,
   busy: false,
   toast: ""
 };
 
 let outsideClickBound = false;
+let onboardingResizeBound = false;
 let touchPopoverTimer = 0;
 let hoverPopoverTimer = 0;
+const ONBOARDING_STORAGE_KEY = "predlog-nakupa:onboarding-complete:v1";
 const DOCUMENT_POPOVER_HOVER_DELAY_MS = 1000;
 const DOCUMENT_STATUS_OPTIONS = [
   { value: "", label: "Brez statusa", className: "none" },
   { value: "submitted", label: "Oddano", className: "submitted" },
   { value: "approved", label: "Potrjeno", className: "approved" },
   { value: "rejected", label: "Zavrnjeno", className: "rejected" }
+];
+const ONBOARDING_STEPS = [
+  {
+    target: "#fullName",
+    title: "Zadnje uporabljeno ostane pri roki",
+    body:
+      "Ime in priimek bo pri novem dokumentu vedno vzeto iz zadnjega uporabljenega dokumenta. Enako velja za delovno mesto in polje za potrebe, vse pa lahko kadarkoli prepišeš."
+  },
+  {
+    target: ".explanation-notes",
+    title: "Opis zna biti mali kalkulator",
+    body:
+      "V obrazložitev lahko napišeš 2*230 eur, 100 - 10% eur ali (3*100+6) eur. Polje zna seštevati, odštevati, množiti, deliti in računati popuste, seštevek pa se prenese spodaj. Še vedno ga lahko popraviš ročno."
+  },
+  {
+    target: "#company",
+    title: "Podjetja si zapomni",
+    body:
+      "Ko enkrat vneseš podjetje, ga bo aplikacija naslednjič ponudila kot autocomplete. Prvi vnos naj bo zato čim bolj pravilen, ker si ga bo pridno zapomnila."
+  },
+  {
+    target: ".date-field",
+    title: "Datum je samodejno današnji",
+    body:
+      "Ob novem dokumentu je datum izdaje nastavljen na današnji datum. Če urejaš dokument za nazaj, ga lahko še vedno spremeniš."
+  },
+  {
+    target: "[data-offer-dropzone]",
+    title: "Ponudba gre zraven dokumenta",
+    body:
+      "Sem lahko povlečeš ponudbo kot PDF ali sliko. Pri izvozu se doda za obrazec, zato ima direktorica podpisni list in ponudbo v enem PDF-ju."
+  },
+  {
+    target: ".history-head",
+    title: "Zadnji predlogi in statusi",
+    body:
+      "Tu se pokaže zadnjih pet izdanih predlogov. Dokument lahko kategoriziraš z desnim klikom na vrstico, na telefonu pa tapni majhno statusno piko ob številki."
+  },
+  {
+    target: ".metric",
+    title: "Poraba brez zavrnjenih predlogov",
+    body:
+      "Aplikacija samodejno sešteva izdane predloge za tekoče leto, da se lažje vidi, koliko je že porabljeno. Če predlog označiš kot zavrnjen, se ne šteje v skupni seštevek."
+  }
 ];
 
 function escapeHtml(value) {
@@ -146,6 +200,88 @@ function renderDocumentPopover() {
       <span class="document-popover-label">Podjetje</span>
       <strong>${escapeHtml(company)}</strong>
       <span>${formatCurrency(proposal.estimatedValueCents || 0)} · ${escapeHtml(status.label)} · ${escapeHtml(attachmentText)}</span>
+    </div>
+  `;
+}
+
+function renderOnboarding() {
+  if (!state.onboarding.active) return "";
+  if (state.onboarding.stage === "welcome") return renderOnboardingWelcome();
+  if (state.onboarding.stage === "tour") return renderOnboardingTour();
+  return "";
+}
+
+function renderOnboardingWelcome() {
+  return `
+    <div class="onboarding-backdrop" role="presentation">
+      <section class="onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+        <form data-onboarding-welcome-form>
+          <div class="onboarding-kicker">Pametna predloga</div>
+          <h2 class="onboarding-title" id="onboarding-title">Pozdravljen/a, vodja laba.</h2>
+          <p class="onboarding-copy">
+            Ali vodja projektov. V glavnem nekdo, ki bi rad, da papirologija danes naredi vsaj en počep sama od sebe.
+          </p>
+          <p class="onboarding-copy">
+            Najprej vnesi naziv laba ali oddelka. Iz tega naredim kratico za interno serijsko številko.
+          </p>
+
+          <label class="onboarding-label" for="onboardingLabName">Naziv laba ali oddelka</label>
+          <input
+            class="onboarding-input"
+            id="onboardingLabName"
+            data-onboarding-lab-name
+            value="${escapeHtml(state.onboarding.labName)}"
+            placeholder="Kovinarski lab"
+            autocomplete="organization-title"
+            required
+          />
+          <div class="onboarding-code-preview">
+            <span>Interna kratica</span>
+            <strong data-onboarding-code-preview>${escapeHtml(state.onboarding.labCodePreview || DEFAULTS.labCode)}</strong>
+          </div>
+
+          <div class="onboarding-examples" aria-label="Primeri kratic">
+            <span>Kovinarski lab -> KOV</span>
+            <span>Lesarski lab -> LES</span>
+            <span>Lab za nakit -> NAK</span>
+            <span>Lab za tekstil -> TEK</span>
+          </div>
+
+          <div class="onboarding-actions">
+            <button class="button button-outline" type="button" data-onboarding-action="skip">Preskoči</button>
+            <button class="button button-solid" type="submit">Začni</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
+function renderOnboardingTour() {
+  const step = ONBOARDING_STEPS[state.onboarding.step] || ONBOARDING_STEPS[0];
+  const stepNumber = state.onboarding.step + 1;
+  const isLast = stepNumber === ONBOARDING_STEPS.length;
+
+  return `
+    <div class="onboarding-tour-layer" aria-live="polite">
+      <div class="onboarding-spotlight" data-onboarding-spotlight aria-hidden="true"></div>
+      <section class="onboarding-tooltip" data-onboarding-tooltip role="dialog" aria-labelledby="onboarding-step-title">
+        <div class="onboarding-step-count">${stepNumber} / ${ONBOARDING_STEPS.length}</div>
+        <h2 class="onboarding-tooltip-title" id="onboarding-step-title">${escapeHtml(step.title)}</h2>
+        <p class="onboarding-tooltip-copy">${escapeHtml(step.body)}</p>
+        <div class="onboarding-tooltip-actions">
+          <button class="button button-outline" type="button" data-onboarding-action="skip">Preskoči</button>
+          <span class="onboarding-action-spacer"></span>
+          ${
+            state.onboarding.step > 0
+              ? `<button class="button button-outline" type="button" data-onboarding-action="back">Nazaj</button>`
+              : ""
+          }
+          <button class="button button-solid" type="button" data-onboarding-action="${isLast ? "finish" : "next"}">
+            ${isLast ? "Končaj" : "Naprej"}
+          </button>
+        </div>
+      </section>
     </div>
   `;
 }
@@ -453,12 +589,14 @@ function render() {
       }
       ${renderStatusMenu()}
       ${renderDocumentPopover()}
+      ${renderOnboarding()}
     </main>
   `;
 
   bindEvents();
   refreshIcons();
   renderToast();
+  positionOnboardingTooltip();
 }
 
 function refreshIcons() {
@@ -578,10 +716,16 @@ function bindEvents() {
 
   document.getElementById("offerInput")?.addEventListener("change", handleOfferSelected);
   bindOfferDropzone();
+  bindOnboardingEvents();
 
   if (!outsideClickBound) {
     document.addEventListener("click", closeSuggestionsOnOutsideClick);
     outsideClickBound = true;
+  }
+
+  if (!onboardingResizeBound) {
+    window.addEventListener("resize", positionOnboardingTooltip);
+    onboardingResizeBound = true;
   }
 }
 
@@ -625,6 +769,156 @@ function bindOfferDropzone() {
       console.error(error);
       showToast(error.message || "Pri pripenjanju datoteke je prišlo do napake.");
     }
+  });
+}
+
+function bindOnboardingEvents() {
+  const form = document.querySelector("[data-onboarding-welcome-form]");
+  const labInput = document.querySelector("[data-onboarding-lab-name]");
+
+  form?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    startOnboardingTour();
+  });
+
+  labInput?.addEventListener("input", (event) => {
+    const labName = event.currentTarget.value;
+    const labCode = deriveLabCodeFromName(labName);
+    state.onboarding.labName = labName;
+    state.onboarding.labCodePreview = labCode;
+    document.querySelector("[data-onboarding-code-preview]")?.replaceChildren(document.createTextNode(labCode));
+  });
+
+  if (state.onboarding.active && state.onboarding.stage === "welcome") {
+    window.setTimeout(() => labInput?.focus(), 0);
+  }
+
+  document.querySelectorAll("[data-onboarding-action]").forEach((button) => {
+    button.addEventListener("click", () => handleOnboardingAction(button.dataset.onboardingAction));
+  });
+}
+
+function handleOnboardingAction(action) {
+  if (action === "skip" || action === "finish") {
+    finishOnboarding();
+    return;
+  }
+
+  if (action === "back") {
+    state.onboarding.step = Math.max(0, state.onboarding.step - 1);
+    render();
+    return;
+  }
+
+  if (action === "next") {
+    state.onboarding.step += 1;
+    if (state.onboarding.step >= ONBOARDING_STEPS.length) {
+      finishOnboarding();
+    } else {
+      render();
+    }
+  }
+}
+
+function startOnboardingTour() {
+  const labName = String(document.querySelector("[data-onboarding-lab-name]")?.value || state.onboarding.labName).trim();
+  const labCode = deriveLabCodeFromName(labName);
+  state.current.labCode = labCode;
+  state.onboarding = {
+    active: true,
+    stage: "tour",
+    step: 0,
+    labName,
+    labCodePreview: labCode
+  };
+  markDirty();
+  render();
+}
+
+function onboardingCompleted() {
+  try {
+    return window.localStorage.getItem(ONBOARDING_STORAGE_KEY) === "done";
+  } catch {
+    return false;
+  }
+}
+
+function markOnboardingCompleted() {
+  try {
+    window.localStorage.setItem(ONBOARDING_STORAGE_KEY, "done");
+  } catch {
+    // Local storage can be unavailable in strict/private browser modes.
+  }
+}
+
+function finishOnboarding() {
+  markOnboardingCompleted();
+  document.querySelectorAll(".onboarding-target").forEach((element) => element.classList.remove("onboarding-target"));
+  state.onboarding = {
+    active: false,
+    stage: "",
+    step: 0,
+    labName: "",
+    labCodePreview: DEFAULTS.labCode
+  };
+  render();
+}
+
+function openOnboardingIfNeeded() {
+  if (onboardingCompleted()) return;
+  state.onboarding = {
+    active: true,
+    stage: "welcome",
+    step: 0,
+    labName: "",
+    labCodePreview: deriveLabCodeFromName("")
+  };
+}
+
+function positionOnboardingTooltip() {
+  window.requestAnimationFrame(() => {
+    document.querySelectorAll(".onboarding-target").forEach((element) => element.classList.remove("onboarding-target"));
+    if (!state.onboarding.active || state.onboarding.stage !== "tour") return;
+
+    const step = ONBOARDING_STEPS[state.onboarding.step];
+    if (!step) return;
+    const target = document.querySelector(step.target);
+    const tooltip = document.querySelector("[data-onboarding-tooltip]");
+    const spotlight = document.querySelector("[data-onboarding-spotlight]");
+    if (!target || !tooltip || !spotlight) return;
+
+    target.scrollIntoView({ block: "center", inline: "nearest" });
+    const rect = target.getBoundingClientRect();
+    target.classList.add("onboarding-target");
+
+    const padding = 8;
+    spotlight.style.left = `${Math.max(8, rect.left - padding)}px`;
+    spotlight.style.top = `${Math.max(8, rect.top - padding)}px`;
+    spotlight.style.width = `${Math.min(window.innerWidth - 16, rect.width + padding * 2)}px`;
+    spotlight.style.height = `${Math.min(window.innerHeight - 16, rect.height + padding * 2)}px`;
+
+    const tooltipWidth = Math.min(340, window.innerWidth - 24);
+    tooltip.style.width = `${tooltipWidth}px`;
+    const tooltipHeight = tooltip.offsetHeight || 220;
+    const gap = 14;
+    const rightSide = rect.right + gap;
+    const leftSide = rect.left - tooltipWidth - gap;
+    let left = rightSide;
+
+    if (rightSide + tooltipWidth > window.innerWidth - 12 && leftSide >= 12) {
+      left = leftSide;
+    } else if (rightSide + tooltipWidth > window.innerWidth - 12) {
+      left = Math.max(12, Math.min(window.innerWidth - tooltipWidth - 12, rect.left));
+    }
+
+    let top = rect.top + rect.height / 2 - tooltipHeight / 2;
+    if (window.innerWidth < 760 || rect.height > window.innerHeight * 0.42) {
+      top = rect.bottom + gap;
+      if (top + tooltipHeight > window.innerHeight - 12) top = rect.top - tooltipHeight - gap;
+    }
+
+    tooltip.style.left = `${Math.round(Math.max(12, Math.min(window.innerWidth - tooltipWidth - 12, left)))}px`;
+    tooltip.style.top = `${Math.round(Math.max(12, Math.min(window.innerHeight - tooltipHeight - 12, top)))}px`;
   });
 }
 
@@ -906,6 +1200,7 @@ async function init() {
   const last = state.proposals[0];
   state.current = last ? createBlankProposal(last) : createBlankProposal();
   state.attachment = null;
+  openOnboardingIfNeeded();
   render();
 
   if ("serviceWorker" in navigator) {

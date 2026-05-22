@@ -297,6 +297,35 @@ export function normalizeLabCode(value) {
     .slice(0, 8) || DEFAULTS.labCode;
 }
 
+export function deriveLabCodeFromName(value) {
+  const source = String(value || "")
+    .trim()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase();
+
+  const knownCodes = [
+    { pattern: /kovin|metal/, code: "KOV" },
+    { pattern: /les|mizar/, code: "LES" },
+    { pattern: /nakit|zlat|srebr/, code: "NAK" },
+    { pattern: /tekstil|siv|sitotisk|tisk/, code: "TEK" },
+    { pattern: /keramik|glin/, code: "KER" },
+    { pattern: /stekl/, code: "STE" },
+    { pattern: /digital|fablab|3d|cnc/, code: "DIG" }
+  ];
+
+  const known = knownCodes.find((item) => item.pattern.test(source));
+  if (known) return known.code;
+
+  const stopWords = new Set(["lab", "laboratorij", "oddelek", "za", "in", "center", "rog", "projekt", "projekti"]);
+  const word = source
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .find((part) => part.length >= 3 && !stopWords.has(part));
+
+  return normalizeLabCode((word || source).slice(0, 3));
+}
+
 export function nextSerial(labCode, year, proposals, currentId) {
   const code = normalizeLabCode(labCode);
   const prefix = `${code}-${year}-`;
