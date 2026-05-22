@@ -103,9 +103,39 @@ button:disabled {
 }
 
 .brand-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
   color: var(--muted-foreground);
   font-size: 11px;
   line-height: 1.25;
+}
+
+.save-state-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #27272a;
+  font-size: 10px;
+  font-weight: 760;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.save-state-unsaved,
+.save-state-dirty {
+  border-color: #a1a1aa;
+  background: #f4f4f5;
+  color: #18181b;
+}
+
+.save-state-saved {
+  color: #52525b;
 }
 
 .toolbar-actions {
@@ -1037,6 +1067,24 @@ textarea.doc-purpose {
   color: var(--foreground);
   font-size: 12px;
   font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-summary-value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-summary-value small {
+  overflow: hidden;
+  max-width: 168px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 520;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

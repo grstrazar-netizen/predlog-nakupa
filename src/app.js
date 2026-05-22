@@ -398,6 +398,33 @@ function accountingNumberPreview() {
   return `${yearFromDate(state.current.issueDate)}- ____`;
 }
 
+function documentSaveState() {
+  if (!state.current.serial) {
+    return {
+      kind: "unsaved",
+      label: "Ni shranjeno",
+      detail: `Predvidena interna evidenca: ${serialPreview()}`,
+      saveLabel: "Shrani dokument"
+    };
+  }
+
+  if (state.dirty) {
+    return {
+      kind: "dirty",
+      label: "Neshranjene spremembe",
+      detail: `Interna evidenca: ${state.current.serial}`,
+      saveLabel: "Shrani spremembe"
+    };
+  }
+
+  return {
+    kind: "saved",
+    label: "Shranjeno",
+    detail: `Interna evidenca: ${state.current.serial}`,
+    saveLabel: "Shrani"
+  };
+}
+
 function centerRogLogoMarkup() {
   return `
     <img class="center-rog-logo" src="/assets/center-rog-logo.svg" alt="Center Rog" />
@@ -450,6 +477,7 @@ function render() {
   const yearlySpendingBreakdown = spendingBreakdownForYear(state.proposals, currentYear);
   const attachment = state.attachment;
   const disabledAttr = state.busy ? "disabled" : "";
+  const saveState = documentSaveState();
   const attachmentDetail = attachment?.mimeType?.startsWith("image/")
     ? "Priložena slika se ob izvozu doda kot dodatna stran v PDF."
     : "Priloženo k PDF izvozu";
@@ -463,7 +491,10 @@ function render() {
           <div class="brand-mark">${icon("file-text")}</div>
           <div class="brand-copy">
             <div class="brand-title">Predlog nakupa drobnega materiala</div>
-            <div class="brand-subtitle">Interna evidenca: ${escapeHtml(serialPreview())}</div>
+            <div class="brand-subtitle">
+              <span class="save-state-pill save-state-${escapeHtml(saveState.kind)}">${escapeHtml(saveState.label)}</span>
+              <span>${escapeHtml(saveState.detail)}</span>
+            </div>
           </div>
         </div>
 
@@ -472,7 +503,7 @@ function render() {
             ${icon("file-plus-2")} Nov dokument
           </button>
           <button class="button button-outline" type="button" data-action="save" data-busy-sensitive ${disabledAttr}>
-            ${icon("save")} Shrani
+            ${icon("save")} ${escapeHtml(saveState.saveLabel)}
           </button>
           <button class="button button-outline" type="button" data-action="attach" data-busy-sensitive ${disabledAttr}>
             ${icon("paperclip")} Pripni ponudbo
@@ -650,7 +681,14 @@ function render() {
               <div class="settings-summary">
                 <div class="settings-summary-row">
                   <span>Interna evidenca</span>
-                  <strong>${escapeHtml(serialPreview())}</strong>
+                  ${
+                    state.current.serial
+                      ? `<strong>${escapeHtml(state.current.serial)}</strong>`
+                      : `<span class="settings-summary-value">
+                          <strong>Ni shranjeno</strong>
+                          <small>Predvideno: ${escapeHtml(serialPreview())}</small>
+                        </span>`
+                  }
                 </div>
                 <div class="settings-summary-row">
                   <span>Računovodstvo</span>
