@@ -169,6 +169,40 @@ button:disabled {
   background: var(--secondary);
 }
 
+.toolbar-button {
+  position: relative;
+}
+
+.toolbar-button::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 100;
+  width: max-content;
+  max-width: 260px;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #ffffff;
+  color: #27272a;
+  box-shadow: 0 14px 36px rgb(0 0 0 / 16%);
+  font-size: 12px;
+  font-weight: 520;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-3px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  white-space: normal;
+}
+
+.toolbar-button:hover::after,
+.toolbar-button:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .button-outline {
   border-color: var(--border);
   background: var(--card);
@@ -1824,6 +1858,27 @@ textarea.doc-purpose {
   .toolbar-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .toolbar-button {
+    width: 38px;
+    padding: 0;
+  }
+
+  .toolbar-button-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .toolbar-button::after {
+    right: auto;
+    left: 0;
+    max-width: min(260px, calc(100vw - 28px));
   }
 
   .button {
