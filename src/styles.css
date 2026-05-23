@@ -228,6 +228,7 @@ button:disabled {
   pointer-events: none;
   transform: translateY(-3px);
   transition: opacity 120ms ease, transform 120ms ease;
+  transition-delay: 0ms;
   white-space: normal;
 }
 
@@ -235,6 +236,11 @@ button:disabled {
 .toolbar-button:focus-visible::after {
   opacity: 1;
   transform: translateY(0);
+}
+
+.toolbar-tooltip-delay-enabled .toolbar-button:hover::after,
+.toolbar-tooltip-delay-enabled .toolbar-button:focus-visible::after {
+  transition-delay: 650ms;
 }
 
 .toolbar-button-label {

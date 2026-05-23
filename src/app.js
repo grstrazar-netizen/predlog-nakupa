@@ -64,6 +64,7 @@ let onboardingCalculatorSnapshot = null;
 let touchPopoverTimer = 0;
 let hoverPopoverTimer = 0;
 let recentDeleteDrag = null;
+let toolbarTooltipDelayArmed = false;
 let suppressedRecentClickId = "";
 const ONBOARDING_STORAGE_KEY = "predlog-nakupa:onboarding-complete:v1";
 const DOCUMENT_POPOVER_HOVER_DELAY_MS = 1000;
@@ -1102,6 +1103,16 @@ function handleKeyboardShortcut(event) {
   void handleAction(action);
 }
 
+function handleToolbarTooltipFirstShow(event) {
+  if (toolbarTooltipDelayArmed) return;
+  if (!event.target.closest?.(".toolbar-button[data-tooltip]")) return;
+
+  toolbarTooltipDelayArmed = true;
+  window.setTimeout(() => {
+    document.documentElement.classList.add("toolbar-tooltip-delay-enabled");
+  }, 180);
+}
+
 function randomLabCode() {
   const alphabet = "ABCDEFGHJKLMNPRSTUVZ";
   const values = crypto.getRandomValues(new Uint8Array(3));
@@ -1815,6 +1826,8 @@ async function init() {
   state.attachment = null;
   openOnboardingIfNeeded();
   document.addEventListener("keydown", handleKeyboardShortcut);
+  document.addEventListener("pointerover", handleToolbarTooltipFirstShow);
+  document.addEventListener("focusin", handleToolbarTooltipFirstShow);
   render();
 
   if (isLocalPreview()) {
