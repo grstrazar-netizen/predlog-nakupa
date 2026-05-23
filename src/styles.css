@@ -145,7 +145,8 @@ button:disabled {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
 }
 
 .button {
@@ -171,6 +172,11 @@ button:disabled {
 
 .toolbar-button {
   position: relative;
+  flex: 0 0 38px;
+  width: 38px;
+  min-width: 38px;
+  padding: 0;
+  gap: 0;
 }
 
 .toolbar-button::after {
@@ -201,6 +207,10 @@ button:disabled {
 .toolbar-button:focus-visible::after {
   opacity: 1;
   transform: translateY(0);
+}
+
+.toolbar-button-label {
+  display: none;
 }
 
 .button-outline {
@@ -1858,21 +1868,12 @@ textarea.doc-purpose {
   .toolbar-actions {
     width: 100%;
     justify-content: flex-start;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 
-  .toolbar-button {
-    width: 38px;
-    padding: 0;
-  }
-
-  .toolbar-button-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    white-space: nowrap;
+  .toolbar-actions::-webkit-scrollbar {
+    display: none;
   }
 
   .toolbar-button::after {
