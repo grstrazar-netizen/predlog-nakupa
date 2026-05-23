@@ -69,7 +69,12 @@ let suppressedRecentClickId = "";
 const ONBOARDING_STORAGE_KEY = "predlog-nakupa:onboarding-complete:v1";
 const DOCUMENT_POPOVER_HOVER_DELAY_MS = 1000;
 const RECENT_DELETE_DRAG_DISTANCE = 92;
-const ONBOARDING_CALCULATOR_DEMO_TEXT = "- slušalke 2*230 EUR\n- čelada 60 EUR\n- popust 100 - 10% EUR";
+const EXPLANATION_EMPTY_EXAMPLE_LINES = [
+  "- Merkur: vijaki, mozniki in sidra 3 x 12,90 EUR",
+  "- zaščitne rokavice 4 x 7,50 EUR",
+  "- brusni papir in čistila 25 EUR"
+];
+const ONBOARDING_CALCULATOR_DEMO_TEXT = EXPLANATION_EMPTY_EXAMPLE_LINES.join("\n");
 const DOCUMENT_STATUS_OPTIONS = [
   { value: "", label: "Brez statusa", className: "none" },
   { value: "submitted", label: "Oddano", className: "submitted" },
@@ -603,7 +608,7 @@ function render() {
             <div class="doc-block">
               <p class="doc-block-label explanation-label">Opis / obrazložitev potrebe:</p>
               <span class="smart-field">
-                <textarea class="doc-textarea explanation-notes" data-field="explanation" data-smart-field="explanation" rows="6" aria-label="Opis oziroma obrazložitev potrebe" placeholder="- slušalke 2*230 EUR&#10;- čelada 60 EUR&#10;- popust 100 - 10% EUR">${escapeHtml(state.current.explanation)}</textarea>
+                <textarea class="doc-textarea explanation-notes" data-field="explanation" data-smart-field="explanation" rows="6" aria-label="Opis oziroma obrazložitev potrebe" placeholder="- Merkur: vijaki, mozniki in sidra 3 x 12,90 EUR&#10;- zaščitne rokavice 4 x 7,50 EUR&#10;- brusni papir in čistila 25 EUR">${escapeHtml(state.current.explanation)}</textarea>
               </span>
             </div>
 
