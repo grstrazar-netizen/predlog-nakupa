@@ -660,10 +660,10 @@ function render() {
           </article>
         </div>
 
-        <aside class="side-panel${state.toolsPanelOpen ? " is-open" : ""}" id="toolsPanel" aria-label="Orodja dokumenta">
+        <aside class="side-panel${state.toolsPanelOpen ? " is-open" : ""}" id="toolsPanel" aria-label="Pregled dokumenta">
           <div class="panel-drawer-header">
-            <span>${icon("panel-right")} Orodja dokumenta</span>
-            <button class="button button-icon-only button-ghost" type="button" data-action="close-tools" aria-label="Zapri orodja dokumenta">
+            <span>${icon("panel-right")} Pregled dokumenta</span>
+            <button class="button button-icon-only button-ghost" type="button" data-action="close-tools" aria-label="Zapri pregled dokumenta">
               ${icon("x")}
             </button>
           </div>
@@ -781,7 +781,7 @@ function render() {
         aria-controls="toolsPanel"
         aria-expanded="${state.toolsPanelOpen ? "true" : "false"}"
       >
-        ${icon("panel-right")} Orodja
+        ${icon("panel-right")} Pregled
       </button>
 
       <input class="hidden-input" type="file" id="offerInput" accept="application/pdf,image/*" />
