@@ -129,13 +129,15 @@ button:disabled {
 
 .save-state-unsaved,
 .save-state-dirty {
-  border-color: #a1a1aa;
-  background: #f4f4f5;
-  color: #18181b;
+  border-color: #dc2626;
+  background: #ffffff;
+  color: #991b1b;
 }
 
 .save-state-saved {
-  color: #52525b;
+  border-color: #16a34a;
+  background: #ffffff;
+  color: #166534;
 }
 
 .toolbar-actions {
