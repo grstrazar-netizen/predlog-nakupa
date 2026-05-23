@@ -1765,6 +1765,25 @@ async function exportPdf(mode) {
   }
 }
 
+function isLocalPreview() {
+  return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
+async function clearLocalPreviewServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+
+  try {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((key) => key.startsWith("predlog-nakupa-")).map((key) => caches.delete(key)));
+    }
+  } catch (error) {
+    console.warn("Local preview service worker cleanup failed", error);
+  }
+}
+
 async function init() {
   state.proposals = sortRecent(await getAllProposals());
   const last = state.proposals[0];
@@ -1773,7 +1792,9 @@ async function init() {
   openOnboardingIfNeeded();
   render();
 
-  if ("serviceWorker" in navigator) {
+  if (isLocalPreview()) {
+    await clearLocalPreviewServiceWorker();
+  } else if ("serviceWorker" in navigator) {
     navigator.serviceWorker
       .register("/service-worker.js")
       .then((registration) => registration.update())

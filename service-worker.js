@@ -1,4 +1,6 @@
-const CACHE_NAME = "predlog-nakupa-v40";
+const CACHE_NAME = "predlog-nakupa-v41";
+const CACHE_PREFIX = "predlog-nakupa-";
+const IS_LOCAL_DEV = ["localhost", "127.0.0.1", "::1"].includes(self.location.hostname);
 const ASSETS = [
   "/",
   "/index.html",
@@ -19,11 +21,27 @@ const CACHEABLE_ORIGINS = new Set([
 ]);
 
 self.addEventListener("install", (event) => {
+  if (IS_LOCAL_DEV) {
+    event.waitUntil(self.skipWaiting());
+    return;
+  }
+
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
+  if (IS_LOCAL_DEV) {
+    event.waitUntil(
+      caches
+        .keys()
+        .then((keys) => Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX)).map((key) => caches.delete(key))))
+        .then(() => self.registration.unregister())
+    );
+    self.clients.claim();
+    return;
+  }
+
   event.waitUntil(
     caches
       .keys()
@@ -56,6 +74,7 @@ async function handleFetch(request) {
 }
 
 self.addEventListener("fetch", (event) => {
+  if (IS_LOCAL_DEV) return;
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
   if (!CACHEABLE_ORIGINS.has(url.origin)) return;
