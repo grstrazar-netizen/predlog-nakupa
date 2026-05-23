@@ -614,6 +614,11 @@ textarea.doc-purpose {
   gap: 12px;
 }
 
+.panel-drawer-header,
+.tools-panel-backdrop {
+  display: none;
+}
+
 .panel {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1248,7 +1253,7 @@ textarea.doc-purpose {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 90;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -1709,8 +1714,97 @@ textarea.doc-purpose {
   }
 
   .side-panel {
-    position: static;
-    order: -1;
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 70;
+    width: min(360px, calc(100vw - 28px));
+    padding: 12px;
+    border-left: 1px solid var(--border);
+    background: var(--background);
+    box-shadow: -18px 0 48px rgb(0 0 0 / 18%);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    pointer-events: none;
+    transform: translateX(calc(100% + 24px));
+    transition: transform 180ms ease;
+    visibility: hidden;
+  }
+
+  .side-panel.is-open {
+    pointer-events: auto;
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  .panel-drawer-header {
+    position: sticky;
+    top: -12px;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 46px;
+    margin: -12px -12px 0;
+    padding: 0 10px 0 12px;
+    border-bottom: 1px solid var(--border);
+    background: rgb(244 244 245 / 96%);
+    backdrop-filter: blur(10px);
+  }
+
+  .panel-drawer-header span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 720;
+  }
+
+  .panel-drawer-header svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .tools-panel-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: none;
+    background: rgb(9 9 11 / 26%);
+  }
+
+  .tools-panel-backdrop.is-open {
+    display: block;
+  }
+
+  .mobile-panel-toggle {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 50;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 42px;
+    padding: 0 14px;
+    border: 1px solid var(--foreground);
+    border-radius: 999px;
+    background: var(--foreground);
+    color: #ffffff;
+    box-shadow: 0 16px 38px rgb(0 0 0 / 22%);
+    font-size: 13px;
+    font-weight: 720;
+  }
+
+  .mobile-panel-toggle:hover {
+    background: #27272a;
+  }
+
+  .mobile-panel-toggle svg {
+    width: 17px;
+    height: 17px;
   }
 }
 
@@ -1736,6 +1830,21 @@ textarea.doc-purpose {
 
   .workspace {
     padding: 12px;
+  }
+
+  .side-panel {
+    width: min(360px, calc(100vw - 18px));
+    padding: 10px;
+  }
+
+  .panel-drawer-header {
+    top: -10px;
+    margin: -10px -10px 0;
+  }
+
+  .mobile-panel-toggle {
+    right: 12px;
+    bottom: 12px;
   }
 
   .paper {
@@ -1849,6 +1958,8 @@ textarea.doc-purpose {
 
   .toolbar,
   .side-panel,
+  .tools-panel-backdrop,
+  .mobile-panel-toggle,
   .toast {
     display: none;
   }

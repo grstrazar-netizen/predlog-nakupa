@@ -34,6 +34,7 @@ const state = {
   current: createBlankProposal(),
   attachment: null,
   historyModalOpen: false,
+  toolsPanelOpen: false,
   statusMenu: null,
   documentPopover: null,
   deleteConfirmId: "",
@@ -643,7 +644,13 @@ function render() {
           </article>
         </div>
 
-        <aside class="side-panel" aria-label="Pametne funkcije dokumenta">
+        <aside class="side-panel${state.toolsPanelOpen ? " is-open" : ""}" id="toolsPanel" aria-label="Orodja dokumenta">
+          <div class="panel-drawer-header">
+            <span>${icon("panel-right")} Orodja dokumenta</span>
+            <button class="button button-icon-only button-ghost" type="button" data-action="close-tools" aria-label="Zapri orodja dokumenta">
+              ${icon("x")}
+            </button>
+          </div>
           <section class="panel">
             <div class="panel-header">
               <span class="panel-icon">${icon("paperclip")}</span>
@@ -748,6 +755,18 @@ function render() {
           </section>
         </aside>
       </section>
+
+      <div class="tools-panel-backdrop${state.toolsPanelOpen ? " is-open" : ""}" data-action="close-tools" aria-hidden="true"></div>
+
+      <button
+        class="mobile-panel-toggle"
+        type="button"
+        data-action="toggle-tools"
+        aria-controls="toolsPanel"
+        aria-expanded="${state.toolsPanelOpen ? "true" : "false"}"
+      >
+        ${icon("panel-right")} Orodja
+      </button>
 
       <input class="hidden-input" type="file" id="offerInput" accept="application/pdf,image/*" />
 
@@ -1339,6 +1358,10 @@ async function handleAction(action) {
       openHistoryModal();
     } else if (action === "close-history") {
       closeHistoryModal();
+    } else if (action === "toggle-tools") {
+      toggleToolsPanel();
+    } else if (action === "close-tools") {
+      closeToolsPanel();
     } else if (action === "cancel-delete") {
       closeDeleteConfirm();
     } else if (action === "confirm-delete") {
@@ -1348,6 +1371,17 @@ async function handleAction(action) {
     console.error(error);
     showToast(error.message || "Prišlo je do napake.");
   }
+}
+
+function toggleToolsPanel() {
+  state.toolsPanelOpen = !state.toolsPanelOpen;
+  render();
+}
+
+function closeToolsPanel() {
+  if (!state.toolsPanelOpen) return;
+  state.toolsPanelOpen = false;
+  render();
 }
 
 function openHistoryModal() {
@@ -1607,6 +1641,7 @@ async function newDocument() {
   state.attachment = null;
   state.statusMenu = null;
   state.documentPopover = null;
+  state.toolsPanelOpen = false;
   state.dirty = false;
   render();
 }
@@ -1633,6 +1668,7 @@ async function loadExistingDocument(id) {
   state.attachment = await getAttachment(proposal.offerAttachmentId);
   state.historyModalOpen = false;
   state.statusMenu = null;
+  state.toolsPanelOpen = false;
   state.dirty = false;
   render();
 }
