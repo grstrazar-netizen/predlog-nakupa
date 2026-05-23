@@ -144,9 +144,19 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 10px;
   flex: 0 0 auto;
   flex-wrap: nowrap;
+}
+
+.button-group {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
 }
 
 .button {
@@ -175,8 +185,26 @@ button:disabled {
   flex: 0 0 38px;
   width: 38px;
   min-width: 38px;
+  border: 0;
+  border-radius: 0;
   padding: 0;
   gap: 0;
+}
+
+.button-group .toolbar-button:first-child {
+  border-radius: 7px 0 0 7px;
+}
+
+.button-group .toolbar-button:last-child {
+  border-radius: 0 7px 7px 0;
+}
+
+.button-group .toolbar-button:only-child {
+  border-radius: 7px;
+}
+
+.button-group .toolbar-button + .toolbar-button {
+  box-shadow: inset 1px 0 0 var(--border);
 }
 
 .toolbar-button::after {

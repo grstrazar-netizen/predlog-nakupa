@@ -541,21 +541,25 @@ function render() {
         </div>
 
         <div class="toolbar-actions">
-          <button class="button button-outline toolbar-button" type="button" data-action="new" data-tooltip="Nov dokument: odpre svež predlog in ohrani zadnje uporabljene pametne podatke." aria-label="Nov dokument" data-busy-sensitive ${disabledAttr}>
-            ${icon("file-plus-2")} <span class="toolbar-button-label">Nov dokument</span>
-          </button>
-          <button class="button button-outline toolbar-button" type="button" data-action="save" data-tooltip="${escapeHtml(saveState.saveLabel)}: shrani predlog in mu po potrebi dodeli interno številko." aria-label="${escapeHtml(saveState.saveLabel)}" data-busy-sensitive ${disabledAttr}>
-            ${icon("save")} <span class="toolbar-button-label">${escapeHtml(saveState.saveLabel)}</span>
-          </button>
-          <button class="button button-outline toolbar-button" type="button" data-action="attach" data-tooltip="Pripni ponudbo: dodaj datoteko PDF ali sliko k predlogu." aria-label="Pripni ponudbo" data-busy-sensitive ${disabledAttr}>
-            ${icon("paperclip")} <span class="toolbar-button-label">Pripni ponudbo</span>
-          </button>
-          <button class="button button-solid toolbar-button" type="button" data-action="download" data-tooltip="Prenesi PDF: shrani predlog in prenese končni dokument." aria-label="Prenesi PDF" data-busy-sensitive ${disabledAttr}>
-            ${icon("download")} <span class="toolbar-button-label">Prenesi PDF</span>
-          </button>
-          <button class="button button-outline toolbar-button" type="button" data-action="print" data-tooltip="Natisni: pripravi dokument PDF in odpre tiskanje." aria-label="Natisni" data-busy-sensitive ${disabledAttr}>
-            ${icon("printer")} <span class="toolbar-button-label">Natisni</span>
-          </button>
+          <div class="button-group" role="group" aria-label="Delo z dokumentom">
+            <button class="button button-outline toolbar-button" type="button" data-action="new" data-tooltip="Nov dokument: odpre svež predlog in ohrani zadnje uporabljene pametne podatke." aria-label="Nov dokument" data-busy-sensitive ${disabledAttr}>
+              ${icon("file-plus-2")} <span class="toolbar-button-label">Nov dokument</span>
+            </button>
+            <button class="button button-outline toolbar-button" type="button" data-action="save" data-tooltip="${escapeHtml(saveState.saveLabel)}: shrani predlog in mu po potrebi dodeli interno številko." aria-label="${escapeHtml(saveState.saveLabel)}" data-busy-sensitive ${disabledAttr}>
+              ${icon("save")} <span class="toolbar-button-label">${escapeHtml(saveState.saveLabel)}</span>
+            </button>
+          </div>
+          <div class="button-group" role="group" aria-label="Priloga, izvoz in tisk">
+            <button class="button button-outline toolbar-button" type="button" data-action="attach" data-tooltip="Pripni ponudbo: dodaj datoteko PDF ali sliko k predlogu." aria-label="Pripni ponudbo" data-busy-sensitive ${disabledAttr}>
+              ${icon("paperclip")} <span class="toolbar-button-label">Pripni ponudbo</span>
+            </button>
+            <button class="button button-solid toolbar-button" type="button" data-action="download" data-tooltip="Prenesi PDF: shrani predlog in prenese končni dokument." aria-label="Prenesi PDF" data-busy-sensitive ${disabledAttr}>
+              ${icon("download")} <span class="toolbar-button-label">Prenesi PDF</span>
+            </button>
+            <button class="button button-outline toolbar-button" type="button" data-action="print" data-tooltip="Natisni: pripravi dokument PDF in odpre tiskanje." aria-label="Natisni" data-busy-sensitive ${disabledAttr}>
+              ${icon("printer")} <span class="toolbar-button-label">Natisni</span>
+            </button>
+          </div>
         </div>
       </header>
 
