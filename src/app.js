@@ -29,6 +29,12 @@ import { createCombinedPdfBlob } from "./pdf.js";
 
 const root = document.getElementById("app");
 
+const KEYBOARD_SHORTCUTS = {
+  n: "new",
+  s: "save",
+  p: "print"
+};
+
 const state = {
   proposals: [],
   current: createBlankProposal(),
@@ -542,10 +548,10 @@ function render() {
 
         <div class="toolbar-actions">
           <div class="button-group" role="group" aria-label="Delo z dokumentom">
-            <button class="button button-outline toolbar-button" type="button" data-action="new" data-tooltip="Nov dokument: odpre svež predlog in ohrani zadnje uporabljene pametne podatke." aria-label="Nov dokument" data-busy-sensitive ${disabledAttr}>
+            <button class="button button-outline toolbar-button" type="button" data-action="new" data-tooltip="Nov dokument: odpre svež predlog in ohrani zadnje uporabljene pametne podatke. Bližnjica: Ctrl/Cmd+N." aria-label="Nov dokument" data-busy-sensitive ${disabledAttr}>
               ${icon("file-plus-2")} <span class="toolbar-button-label">Nov dokument</span>
             </button>
-            <button class="button button-outline toolbar-button" type="button" data-action="save" data-tooltip="${escapeHtml(saveState.saveLabel)}: shrani predlog in mu po potrebi dodeli interno številko." aria-label="${escapeHtml(saveState.saveLabel)}" data-busy-sensitive ${disabledAttr}>
+            <button class="button button-outline toolbar-button" type="button" data-action="save" data-tooltip="${escapeHtml(saveState.saveLabel)}: shrani predlog in mu po potrebi dodeli interno številko. Bližnjica: Ctrl/Cmd+S." aria-label="${escapeHtml(saveState.saveLabel)}" data-busy-sensitive ${disabledAttr}>
               ${icon("save")} <span class="toolbar-button-label">${escapeHtml(saveState.saveLabel)}</span>
             </button>
           </div>
@@ -556,7 +562,7 @@ function render() {
             <button class="button button-solid toolbar-button" type="button" data-action="download" data-tooltip="Prenesi PDF: shrani predlog in prenese končni dokument." aria-label="Prenesi PDF" data-busy-sensitive ${disabledAttr}>
               ${icon("download")} <span class="toolbar-button-label">Prenesi PDF</span>
             </button>
-            <button class="button button-outline toolbar-button" type="button" data-action="print" data-tooltip="Natisni: pripravi dokument PDF in odpre tiskanje." aria-label="Natisni" data-busy-sensitive ${disabledAttr}>
+            <button class="button button-outline toolbar-button" type="button" data-action="print" data-tooltip="Natisni: pripravi dokument PDF in odpre tiskanje. Bližnjica: Ctrl/Cmd+P." aria-label="Natisni" data-busy-sensitive ${disabledAttr}>
               ${icon("printer")} <span class="toolbar-button-label">Natisni</span>
             </button>
           </div>
@@ -1080,6 +1086,20 @@ function handleOnboardingAction(action) {
       render();
     }
   }
+}
+
+function handleKeyboardShortcut(event) {
+  if (event.defaultPrevented || event.repeat || event.isComposing) return;
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+
+  const action = KEYBOARD_SHORTCUTS[event.key.toLowerCase()];
+  if (!action) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (state.busy || state.onboarding.active || state.historyModalOpen || state.deleteConfirmId) return;
+  void handleAction(action);
 }
 
 function randomLabCode() {
@@ -1794,6 +1814,7 @@ async function init() {
   state.current = last ? createBlankProposal(last) : createBlankProposal();
   state.attachment = null;
   openOnboardingIfNeeded();
+  document.addEventListener("keydown", handleKeyboardShortcut);
   render();
 
   if (isLocalPreview()) {
