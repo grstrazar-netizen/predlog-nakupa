@@ -1361,6 +1361,8 @@ textarea.doc-purpose {
 
 .onboarding-modal {
   width: min(520px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
   padding: 24px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1385,6 +1387,97 @@ textarea.doc-purpose {
 .onboarding-copy-muted {
   color: #71717a;
   font-size: 12px;
+}
+
+.shortcut-visual {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.shortcut-browser-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 28px;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 5px 6px 5px 10px;
+  border: 1px solid #d4d4d8;
+  border-radius: 999px;
+  background: #ffffff;
+}
+
+.shortcut-address {
+  overflow: hidden;
+  color: #71717a;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shortcut-install-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid #18181b;
+  border-radius: 999px;
+  background: #18181b;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.shortcut-install-chip svg {
+  width: 13px;
+  height: 13px;
+}
+
+.shortcut-more {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #d4d4d8;
+  border-radius: 999px;
+  color: #18181b;
+  font-size: 19px;
+  line-height: 1;
+}
+
+.shortcut-menu-visual {
+  justify-self: end;
+  display: grid;
+  gap: 3px;
+  width: min(310px, 100%);
+  padding: 8px;
+  border: 1px solid #d4d4d8;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 14px 30px rgb(0 0 0 / 10%);
+}
+
+.shortcut-menu-visual span,
+.shortcut-menu-visual strong {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 6px;
+  color: #27272a;
+  font-size: 12px;
+  text-align: left;
+}
+
+.shortcut-menu-visual strong {
+  background: #18181b;
+  color: #ffffff;
+  font-weight: 720;
 }
 
 .onboarding-steps-list {

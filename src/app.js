@@ -394,19 +394,33 @@ function renderOnboardingInstallShortcut() {
   return `
     <div class="onboarding-backdrop" role="presentation">
       <section class="onboarding-modal onboarding-shortcut-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-shortcut-title">
-        <h2 class="onboarding-title" id="onboarding-shortcut-title">Še zadnji trik: naredi si bližnjico</h2>
+        <h2 class="onboarding-title" id="onboarding-shortcut-title">Še zadnji trik: namesti aplikacijo</h2>
         <p class="onboarding-copy">
-          Če bo aplikacija živela samo kot zavihek med šestnajstimi drugimi zavihki, se bo nekega dne skrila ravno takrat, ko jo rabiš.
-          Na računalniku z operacijskim sistemom Windows jo lahko v Chromu namestiš kot majhno namizno aplikacijo.
+          Če aplikacijo namestiš v Chromu, se odpre kot svoje okno in jo lahko pripneš v meni Start ali opravilno vrstico.
+          Na računalniku z operacijskim sistemom Windows je postopek običajno tak:
         </p>
+        <div class="shortcut-visual" aria-label="Shematski prikaz Chromovega menija za namestitev aplikacije">
+          <div class="shortcut-browser-bar">
+            <span class="shortcut-address">predlog-nakupa.vercel.app</span>
+            <span class="shortcut-install-chip">${icon("download")} Namesti</span>
+            <span class="shortcut-more" aria-hidden="true">⋮</span>
+          </div>
+          <div class="shortcut-menu-visual">
+            <span>⋮ Več možnosti</span>
+            <span>Predvajanje, shranjevanje in deljenje</span>
+            <strong>Namesti stran kot aplikacijo</strong>
+          </div>
+        </div>
         <ol class="onboarding-steps-list">
           <li>Odpri aplikacijo v Google Chromu.</li>
-          <li>Če se desno v naslovni vrstici pokaže ikona za namestitev, klikni <strong>Namesti</strong>.</li>
-          <li>Če ikone ni: klikni <strong>tri pikice</strong> zgoraj desno, nato <strong>Shrani in deli</strong> oziroma <strong>Cast, save, and share</strong>, potem <strong>Namesti stran kot aplikacijo</strong>.</li>
-          <li>Potrdi namestitev. Aplikacija se pokaže v meniju Start, lahko pa jo pripneš tudi v opravilno vrstico.</li>
+          <li>Če se v desnem delu naslovne vrstice pokaže ikona za namestitev, klikni nanjo in izberi <strong>Namesti</strong>.</li>
+          <li>Če ikone ni, klikni ikono s tremi pikami zgoraj desno.</li>
+          <li>Izberi <strong>Predvajanje, shranjevanje in deljenje</strong>, nato <strong>Namesti stran kot aplikacijo</strong>.</li>
+          <li>Potrdi namestitev. Aplikacija se pokaže v meniju Start; z desnim klikom jo lahko pripneš tudi v opravilno vrstico.</li>
         </ol>
         <p class="onboarding-copy onboarding-copy-muted">
-          Če želiš kasneje ročno dodati bližnjico na namizje, v Chromu odpri <strong>chrome://apps</strong>, z desnim klikom izberi aplikacijo in nato <strong>Ustvari bližnjico</strong>.
+          Če želiš klasično bližnjico prav na namizju, odpri <strong>chrome://apps</strong>, z desno tipko miške klikni aplikacijo, izberi <strong>Ustvari bližnjico</strong>, označi <strong>Namizje</strong> in klikni <strong>Ustvari</strong>.
+          Če teh možnosti ni, ima Chrome morda drugačen jezik vmesnika ali pa ga upravlja organizacija.
         </p>
         <div class="onboarding-actions">
           <button class="button button-solid" type="button" data-onboarding-action="finish-onboarding">Razumem, začnimo</button>
