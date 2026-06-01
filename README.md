@@ -8,7 +8,7 @@ Dokumentno usmerjena lokalna progresivna spletna aplikacija za izdajo obrazca **
 npm run dev
 ```
 
-Nato odpri `http://127.0.0.1:5173`.
+Nato odpri `http://127.0.0.1:4173`.
 
 ## Preverjanje in produkcijski build
 

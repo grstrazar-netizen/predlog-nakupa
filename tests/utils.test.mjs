@@ -11,7 +11,8 @@ import {
   parseMoneyToCents,
   spendingBreakdownForYear,
   spendingForYear,
-  uniqueSuggestions
+  uniqueSuggestions,
+  validateProposalRequiredFields
 } from "../src/utils.js";
 
 test("normalizes lab codes for serial numbers", () => {
@@ -115,4 +116,45 @@ test("derives unique autocomplete suggestions from documents", () => {
   ];
   assert.deepEqual(uniqueSuggestions(proposals, "company", "met"), ["Metalshop d.o.o."]);
   assert.deepEqual(uniqueSuggestions(proposals, "company", ""), ["AMAZON", "Metalshop d.o.o."]);
+});
+
+test("validates required proposal fields before saving or exporting", () => {
+  const invalid = validateProposalRequiredFields({
+    fullName: "",
+    jobTitle: "",
+    purpose: "",
+    explanation: "",
+    company: "",
+    issueDate: "",
+    labCode: "",
+    estimatedValueCents: 0
+  });
+
+  assert.equal(invalid.valid, false);
+  assert.equal(invalid.message, "Pred nadaljevanjem izpolnite vsa obvezna polja.");
+  assert.deepEqual(Object.keys(invalid.fields).sort(), [
+    "company",
+    "estimatedValueCents",
+    "explanation",
+    "fullName",
+    "issueDate",
+    "jobTitle",
+    "labCode",
+    "purpose"
+  ]);
+
+  const valid = validateProposalRequiredFields({
+    fullName: "Gregor Stražar",
+    jobTitle: "Vodja kovinarskega laba",
+    purpose: "Za potrebe kovinarskega laba",
+    explanation: "Merkur: vijaki 12,90 EUR",
+    company: "Merkur trgovina d.o.o.",
+    issueDate: "2026-06-01",
+    labCode: "KOV",
+    estimatedValueCents: 1290
+  });
+
+  assert.equal(valid.valid, true);
+  assert.equal(valid.message, "");
+  assert.deepEqual(valid.fields, {});
 });

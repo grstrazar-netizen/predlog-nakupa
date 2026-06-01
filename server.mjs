@@ -7,7 +7,7 @@ const projectRoot = fileURLToPath(new URL(".", import.meta.url));
 const serveDist = process.argv.includes("--dist");
 const root = resolve(projectRoot, process.env.SERVE_DIR || (serveDist ? "dist" : "."));
 const rootPrefix = root.endsWith(sep) ? root : `${root}${sep}`;
-const port = Number(process.env.PORT || 5173);
+const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "127.0.0.1";
 
 const types = {

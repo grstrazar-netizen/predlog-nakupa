@@ -360,6 +360,39 @@ export function createBlankProposal(lastProposal) {
   };
 }
 
+function isFilledText(value) {
+  return String(value ?? "").trim().length > 0;
+}
+
+export function validateProposalRequiredFields(proposal) {
+  const fields = {};
+  const requiredFields = [
+    ["fullName", isFilledText(proposal?.fullName)],
+    ["jobTitle", isFilledText(proposal?.jobTitle)],
+    ["purpose", isFilledText(proposal?.purpose)],
+    ["explanation", isFilledText(proposal?.explanation)],
+    ["company", isFilledText(proposal?.company)],
+    ["issueDate", isFilledText(proposal?.issueDate)],
+    ["labCode", isFilledText(proposal?.labCode)],
+    ["estimatedValueCents", Number.isFinite(Number(proposal?.estimatedValueCents)) && Number(proposal?.estimatedValueCents) > 0]
+  ];
+
+  let firstInvalidField = "";
+  requiredFields.forEach(([field, isValid]) => {
+    if (isValid) return;
+    fields[field] = "To polje je obvezno.";
+    if (!firstInvalidField) firstInvalidField = field;
+  });
+
+  const valid = Object.keys(fields).length === 0;
+  return {
+    valid,
+    message: valid ? "" : "Pred nadaljevanjem izpolnite vsa obvezna polja.",
+    fields,
+    firstInvalidField
+  };
+}
+
 export function proposalWithSaveMetadata(proposal, proposals) {
   const now = new Date().toISOString();
   const id = proposal.id || generateId("proposal");

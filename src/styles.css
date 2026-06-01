@@ -651,6 +651,65 @@ textarea.doc-purpose {
 .smart-field {
   position: relative;
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.form-error-banner {
+  margin: -20px 0 18px;
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #b91c1c;
+  font-size: 13px;
+  font-weight: 560;
+  line-height: 1.35;
+}
+
+.field-error {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.doc-field.is-invalid,
+.doc-textarea.is-invalid,
+.settings-code-input.is-invalid {
+  border-bottom-color: #dc2626;
+  background: #fff1f2;
+}
+
+.doc-field.is-invalid:hover,
+.doc-textarea.is-invalid:hover,
+.doc-field.is-invalid:focus,
+.doc-textarea.is-invalid:focus,
+.settings-code-input.is-invalid:focus {
+  border-bottom-color: #b91c1c;
+  background: #fff1f2;
+}
+
+.explanation-notes.is-invalid {
+  border-color: #dc2626;
+}
+
+.amount-field-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  width: 92px;
+}
+
+.settings-code-field-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  min-width: 0;
 }
 
 .suggestion-popover {

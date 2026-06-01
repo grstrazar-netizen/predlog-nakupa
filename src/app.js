@@ -12,6 +12,7 @@ import {
   proposalWithSaveMetadata,
   safeFileName,
   sortRecent,
+  validateProposalRequiredFields,
   spendingBreakdownForYear,
   spendingForYear,
   uniqueSuggestions,
@@ -53,6 +54,11 @@ const state = {
   },
   dirty: false,
   busy: false,
+  validation: {
+    message: "",
+    fields: {},
+    firstInvalidField: ""
+  },
   toast: ""
 };
 
@@ -489,6 +495,162 @@ function markDirty() {
   state.dirty = true;
 }
 
+function emptyValidationState() {
+  return {
+    message: "",
+    fields: {},
+    firstInvalidField: "",
+    firstInvalidSelector: ""
+  };
+}
+
+function clearValidation() {
+  state.validation = emptyValidationState();
+}
+
+function setValidation(validation) {
+  state.validation = {
+    message: validation?.message || "",
+    fields: validation?.fields || {},
+    firstInvalidField: validation?.firstInvalidField || "",
+    firstInvalidSelector: validation?.firstInvalidSelector || ""
+  };
+}
+
+function validationFieldError(fieldName) {
+  return state.validation.fields?.[fieldName] || "";
+}
+
+function validationFieldIsInvalid(fieldName) {
+  return Boolean(validationFieldError(fieldName));
+}
+
+function validationFieldId(fieldName) {
+  return `validation-error-${fieldName}`;
+}
+
+function validationControlAttrs(fieldName) {
+  if (!validationFieldIsInvalid(fieldName)) return "";
+  return `aria-invalid="true" aria-describedby="${validationFieldId(fieldName)}"`;
+}
+
+function validationControlClass(baseClass, fieldName) {
+  return `${baseClass}${validationFieldIsInvalid(fieldName) ? " is-invalid" : ""}`;
+}
+
+function renderFieldError(fieldName) {
+  const message = validationFieldError(fieldName);
+  return message ? `<p class="field-error" id="${validationFieldId(fieldName)}">${escapeHtml(message)}</p>` : "";
+}
+
+function validationTargetSelector(fieldName) {
+  const selectors = {
+    fullName: "#fullName",
+    jobTitle: "#jobTitle",
+    purpose: '[data-field="purpose"]',
+    explanation: '[data-field="explanation"]',
+    company: "#company",
+    estimatedValueCents: "#estimatedValue",
+    issueDate: '[data-field="issueDate"]',
+    labCode: "#labCode"
+  };
+  return selectors[fieldName] || "";
+}
+
+function validateDynamicItemRows() {
+  const rows = Array.from(document.querySelectorAll("[data-item-row]"));
+  if (!rows.length) {
+    return {
+      fields: {},
+      firstInvalidSelector: ""
+    };
+  }
+
+  const fields = {};
+  let firstInvalidSelector = "";
+  const requiredFields = [
+    { field: "name", aliases: ["naziv", "name", "postavka"] },
+    { field: "quantity", aliases: ["kolicina", "količina", "quantity"] },
+    { field: "unit", aliases: ["enota", "unit"] },
+    { field: "estimatedValueCents", aliases: ["price", "cena", "value", "estimatedValue"] },
+    { field: "purpose", aliases: ["purpose", "namen", "obrazložitev", "explanation"] }
+  ];
+
+  rows.forEach((row, rowIndex) => {
+    requiredFields.forEach(({ field, aliases }) => {
+      const candidate = [
+        `[data-item-field="${field}"]`,
+        ...aliases.map((alias) => `[data-item-field="${alias}"]`)
+      ]
+        .map((selector) => row.querySelector(selector))
+        .find(Boolean);
+
+      if (!candidate) return;
+
+      const isFilled =
+        candidate.type === "checkbox" || candidate.type === "radio"
+          ? candidate.checked
+          : candidate.dataset.value !== undefined
+            ? String(candidate.dataset.value || "").trim().length > 0
+            : candidate.value != null && String(candidate.value).trim().length > 0;
+
+      if (isFilled) return;
+
+      const key = `item-${row.dataset.itemRowId || rowIndex}-${field}`;
+      fields[key] = "To polje je obvezno.";
+      if (!firstInvalidSelector) {
+        const rowSelector = row.dataset.itemRowId
+          ? `[data-item-row-id="${String(row.dataset.itemRowId).replaceAll('"', '\\"')}"]`
+          : `[data-item-row]:nth-of-type(${rowIndex + 1})`;
+        firstInvalidSelector = `${rowSelector} [data-item-field="${field}"]`;
+      }
+    });
+  });
+
+  return {
+    fields,
+    firstInvalidSelector
+  };
+}
+
+function validateCurrentDocument() {
+  const baseValidation = validateProposalRequiredFields(state.current);
+  const itemValidation = validateDynamicItemRows();
+  const fields = {
+    ...baseValidation.fields,
+    ...itemValidation.fields
+  };
+  const valid = Object.keys(fields).length === 0;
+
+  return {
+    valid,
+    message: valid ? "" : "Pred nadaljevanjem izpolnite vsa obvezna polja.",
+    fields,
+    firstInvalidField: baseValidation.firstInvalidField || (itemValidation.firstInvalidSelector ? "" : ""),
+    firstInvalidSelector:
+      itemValidation.firstInvalidSelector || validationTargetSelector(baseValidation.firstInvalidField)
+  };
+}
+
+function prepareValidationFocus(validation) {
+  const selector = validation?.firstInvalidSelector || validationTargetSelector(validation?.firstInvalidField);
+  if (selector === "#labCode") {
+    state.toolsPanelOpen = true;
+  }
+}
+
+function focusValidationTarget(validation) {
+  const selector = validation?.firstInvalidSelector || validationTargetSelector(validation?.firstInvalidField);
+  if (!selector) return;
+
+  window.requestAnimationFrame(() => {
+    const target = document.querySelector(selector);
+    if (!target || !(target instanceof HTMLElement)) return;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ block: "center", inline: "nearest" });
+  });
+}
+
 function syncCalculatedValueDisplay(calculatedCents) {
   const valueInput = document.getElementById("estimatedValue");
   if (valueInput && calculatedCents > 0) {
@@ -532,6 +694,7 @@ function render() {
   const attachment = state.attachment;
   const disabledAttr = state.busy ? "disabled" : "";
   const saveState = documentSaveState();
+  const validation = state.validation || emptyValidationState();
   const attachmentDetail = attachment?.mimeType?.startsWith("image/")
     ? "Priložena slika se ob izvozu doda kot dodatna stran v dokumentu PDF."
     : "Priloženo k izvozu v PDF";
@@ -583,45 +746,58 @@ function render() {
             </div>
 
             <h1 class="document-title">PREDLOG NAKUPA DROBNEGA MATERIALA</h1>
+            ${
+              validation.message
+                ? `<div class="form-error-banner" role="alert">${escapeHtml(validation.message)}</div>`
+                : ""
+            }
 
             <div class="doc-line">
               <label for="fullName">Ime in priimek:</label>
               <span class="smart-field">
-                <input class="doc-field person-name-field" id="fullName" data-field="fullName" value="${escapeHtml(state.current.fullName)}" autocomplete="name" />
+                <input class="${validationControlClass("doc-field person-name-field", "fullName")}" id="fullName" data-field="fullName" value="${escapeHtml(state.current.fullName)}" autocomplete="name" ${validationControlAttrs("fullName")} />
+                ${renderFieldError("fullName")}
               </span>
             </div>
 
             <div class="doc-line">
               <label for="jobTitle">Zaposlen/a na delovnem mestu:</label>
               <span class="smart-field">
-                <input class="doc-field person-job-field" id="jobTitle" data-field="jobTitle" value="${escapeHtml(state.current.jobTitle)}" />
+                <input class="${validationControlClass("doc-field person-job-field", "jobTitle")}" id="jobTitle" data-field="jobTitle" value="${escapeHtml(state.current.jobTitle)}" ${validationControlAttrs("jobTitle")} />
+                ${renderFieldError("jobTitle")}
               </span>
             </div>
 
             <div class="doc-block purpose-block">
               <p class="doc-block-label">Predlagam nakup naslednjega drobnega materiala za potrebe:</p>
               <span class="smart-field">
-                <input class="doc-field doc-purpose" data-field="purpose" data-smart-field="purpose" value="${escapeHtml(state.current.purpose)}" />
+                <input class="${validationControlClass("doc-field doc-purpose", "purpose")}" data-field="purpose" data-smart-field="purpose" value="${escapeHtml(state.current.purpose)}" ${validationControlAttrs("purpose")} />
+                ${renderFieldError("purpose")}
               </span>
             </div>
 
             <div class="doc-block">
               <p class="doc-block-label explanation-label">Opis / obrazložitev potrebe:</p>
               <span class="smart-field">
-                <textarea class="doc-textarea explanation-notes" data-field="explanation" data-smart-field="explanation" rows="6" aria-label="Opis oziroma obrazložitev potrebe" placeholder="- Merkur: vijaki, mozniki in sidra 3 x 12,90 EUR&#10;- zaščitne rokavice 4 x 7,50 EUR&#10;- brusni papir in čistila 25 EUR">${escapeHtml(state.current.explanation)}</textarea>
+                <textarea class="${validationControlClass("doc-textarea explanation-notes", "explanation")}" data-field="explanation" data-smart-field="explanation" rows="6" aria-label="Opis oziroma obrazložitev potrebe" placeholder="- Merkur: vijaki, mozniki in sidra 3 x 12,90 EUR&#10;- zaščitne rokavice 4 x 7,50 EUR&#10;- brusni papir in čistila 25 EUR" ${validationControlAttrs("explanation")}>${escapeHtml(state.current.explanation)}</textarea>
+                ${renderFieldError("explanation")}
               </span>
             </div>
 
             <div class="doc-line">
               <label for="company">Podjetje:</label>
               <span class="smart-field">
-                <input class="doc-field" id="company" data-field="company" data-smart-field="company" value="${escapeHtml(state.current.company)}" />
+                <input class="${validationControlClass("doc-field", "company")}" id="company" data-field="company" data-smart-field="company" value="${escapeHtml(state.current.company)}" ${validationControlAttrs("company")} />
+                ${renderFieldError("company")}
               </span>
             </div>
 
             <div class="doc-line value-line">
               <label for="estimatedValue">V okvirni skupni vrednosti: cca</label>
-              <input class="doc-field amount-field" id="estimatedValue" data-field="estimatedValueCents" inputmode="decimal" value="${escapeHtml(centsToInputValue(state.current.estimatedValueCents))}" />
+              <span class="field-stack amount-field-stack">
+                <input class="${validationControlClass("doc-field amount-field", "estimatedValueCents")}" id="estimatedValue" data-field="estimatedValueCents" inputmode="decimal" value="${escapeHtml(centsToInputValue(state.current.estimatedValueCents))}" ${validationControlAttrs("estimatedValueCents")} />
+                ${renderFieldError("estimatedValueCents")}
+              </span>
               <span>brez DDV</span>
             </div>
 
@@ -764,7 +940,10 @@ function render() {
                 </div>
                 <div class="settings-summary-row settings-summary-editable">
                   <label for="labCode">Kratica laba</label>
-                  <input class="settings-code-input" id="labCode" data-field="labCode" value="${escapeHtml(state.current.labCode)}" aria-label="Kratica laba za interno številčenje" />
+                  <span class="settings-code-field-wrap">
+                    <input class="${validationControlClass("settings-code-input", "labCode")}" id="labCode" data-field="labCode" value="${escapeHtml(state.current.labCode)}" aria-label="Kratica laba za interno številčenje" ${validationControlAttrs("labCode")} />
+                    ${renderFieldError("labCode")}
+                  </span>
                 </div>
               </div>
             </div>
@@ -1683,10 +1862,21 @@ async function newDocument() {
   state.documentPopover = null;
   state.toolsPanelOpen = false;
   state.dirty = false;
+  clearValidation();
   render();
 }
 
 async function saveCurrentDocument({ silent = false } = {}) {
+  const validation = validateCurrentDocument();
+  if (!validation.valid) {
+    setValidation(validation);
+    prepareValidationFocus(validation);
+    render();
+    focusValidationTarget(validation);
+    return null;
+  }
+
+  clearValidation();
   const proposals = await getAllProposals();
   const saved = proposalWithSaveMetadata(state.current, proposals);
   await saveProposal(saved);
@@ -1710,6 +1900,7 @@ async function loadExistingDocument(id) {
   state.statusMenu = null;
   state.toolsPanelOpen = false;
   state.dirty = false;
+  clearValidation();
   render();
 }
 
@@ -1781,6 +1972,7 @@ async function exportPdf(mode) {
   setBusy(true);
   try {
     const saved = await saveCurrentDocument({ silent: true });
+    if (!saved) return;
     const attachment = saved.offerAttachmentId ? await getAttachment(saved.offerAttachmentId) : null;
     const pdfBlob = await createCombinedPdfBlob(saved, attachment);
     const fileName = `${safeFileName(`predlog-${saved.serial}`)}.pdf`;
