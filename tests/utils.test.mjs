@@ -1,9 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  DEFAULT_PURCHASE_TAGS,
-  buildPurchaseTagCatalog,
-  createBlankItem,
   formatCurrency,
   evaluateEuroExpression,
   extractEuroAmounts,
@@ -11,13 +8,10 @@ import {
   deriveLabCodeFromName,
   nextSerial,
   normalizeLabCode,
-  normalizeCustomPurchaseTags,
-  normalizeProposalItems,
   parseMoneyToCents,
   spendingBreakdownForYear,
   spendingForYear,
   uniqueSuggestions,
-  validateProposalItems,
   validateProposalRequiredFields
 } from "../src/utils.js";
 
@@ -38,69 +32,6 @@ test("parses Slovenian money values to cents", () => {
   assert.equal(parseMoneyToCents("1.240,50 €"), 124050);
   assert.equal(parseMoneyToCents("270 brez DDV"), 27000);
   assert.equal(parseMoneyToCents(""), 0);
-});
-
-test("builds purchase tag catalog with default tags and unique custom tags", () => {
-  const catalog = buildPurchaseTagCatalog([
-    { id: "custom-1", label: "Prevoz", description: "Prevoz blaga" },
-    { id: "custom-2", label: "Potrošni material", description: "Duplicate of default" },
-    { id: "custom-1", label: "Podvojeno", description: "Duplicate id" }
-  ]);
-
-  assert.equal(catalog[0].label, DEFAULT_PURCHASE_TAGS[0].label);
-  assert.deepEqual(
-    catalog.slice(DEFAULT_PURCHASE_TAGS.length).map((tag) => tag.label),
-    ["Prevoz"]
-  );
-});
-
-test("normalizes custom tags by trimming text and skipping duplicates", () => {
-  assert.deepEqual(
-    normalizeCustomPurchaseTags([
-      { id: " tag-1 ", label: " Prevoz ", description: "  Prevoz materiala  " },
-      { id: "", label: "Prevoz", description: "Duplicate label" },
-      { id: "tag-2", label: "", description: "Missing label" }
-    ]),
-    [{ id: " tag-1 ", label: "Prevoz", description: "Prevoz materiala", isDefault: false }]
-  );
-});
-
-test("normalizes item rows and keeps tag snapshot in place", () => {
-  const catalog = buildPurchaseTagCatalog([{ id: "custom-1", label: "Prevoz", description: "Prevoz blaga" }]);
-  const normalized = normalizeProposalItems(
-    [
-      {
-        id: "item-1",
-        name: "  Brusni papir  ",
-        quantity: " 2 ",
-        unit: "kos",
-        valueCents: "1290",
-        tagId: "custom-1"
-      }
-    ],
-    catalog
-  );
-
-  assert.deepEqual(normalized, [
-    {
-      id: "item-1",
-      name: "Brusni papir",
-      quantity: "2",
-      unit: "kos",
-      valueCents: 1290,
-      tagId: "custom-1",
-      tagLabel: "Prevoz",
-      tagDescription: "Prevoz blaga"
-    }
-  ]);
-});
-
-test("creates blank item rows with the last selected tag", () => {
-  const catalog = buildPurchaseTagCatalog([{ id: "custom-1", label: "Prevoz", description: "Prevoz blaga" }]);
-  const blank = createBlankItem({ tagId: "custom-1" }, catalog);
-
-  assert.equal(blank.tagId, "custom-1");
-  assert.equal(blank.tagLabel, "Prevoz");
 });
 
 test("extracts and sums euro amounts from explanation notes", () => {
@@ -222,38 +153,6 @@ test("validates required proposal fields before saving or exporting", () => {
     labCode: "KOV",
     estimatedValueCents: 1290
   });
-
-  assert.equal(valid.valid, true);
-  assert.equal(valid.message, "");
-  assert.deepEqual(valid.fields, {});
-});
-
-test("validates item rows before saving or exporting", () => {
-  const invalid = validateProposalItems([
-    { id: "item-1", name: "", quantity: "", unit: "", valueCents: 0, tagId: "" }
-  ]);
-
-  assert.equal(invalid.valid, false);
-  assert.equal(invalid.message, "Pred nadaljevanjem izpolnite vsa obvezna polja.");
-  assert.deepEqual(Object.keys(invalid.fields).sort(), [
-    "item-item-1-name",
-    "item-item-1-quantity",
-    "item-item-1-tagId",
-    "item-item-1-unit",
-    "item-item-1-valueCents"
-  ]);
-  assert.equal(invalid.firstInvalidSelector, '[data-item-row-id="item-1"] [data-item-field="name"]');
-
-  const valid = validateProposalItems([
-    {
-      id: "item-2",
-      name: "Brusni papir",
-      quantity: "2",
-      unit: "kos",
-      valueCents: 1290,
-      tagId: "potrosni-material"
-    }
-  ]);
 
   assert.equal(valid.valid, true);
   assert.equal(valid.message, "");
