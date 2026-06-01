@@ -80,6 +80,19 @@ function measureText(ctx, text, options = {}) {
   return width;
 }
 
+function fitText(ctx, text, maxWidth, options = {}) {
+  const source = String(text || "");
+  if (!source) return "";
+  if (measureText(ctx, source, options) <= maxWidth) return source;
+
+  const ellipsis = "…";
+  let value = source;
+  while (value.length > 1 && measureText(ctx, `${value}${ellipsis}`, options) > maxWidth) {
+    value = value.slice(0, -1);
+  }
+  return `${value.replace(/\s+$/g, "")}${ellipsis}`;
+}
+
 function wrapText(ctx, text, x, y, maxWidth, lineHeight, options = {}) {
   let cursorY = y;
   ctx.font = `${options.style || "normal"} ${options.weight || "400"} ${options.size || 28}px ${options.family || PDF_FONT}`;
@@ -290,7 +303,69 @@ async function renderProposalCanvas(proposal) {
     maxY: notesY + notesHeight - paperPx(12)
   });
 
-  y = notesY + notesHeight + paperPx(38);
+  const items = Array.isArray(proposal?.items) ? proposal.items : [];
+  const tableTop = notesY + notesHeight + paperPx(24);
+
+  if (items.length) {
+    const sectionTitleSize = fontPx(13);
+    const rowFontSize = fontPx(items.length > 4 ? 10.5 : 11.5);
+    const rowLineHeight = paperPx(items.length > 4 ? 16 : 18);
+    const gap = paperPx(8);
+    const nameWidth = paperPx(282);
+    const quantityWidth = paperPx(72);
+    const unitWidth = paperPx(64);
+    const tagWidth = paperPx(178);
+    const headerY = tableTop;
+
+    drawText(ctx, "Postavke nakupa", left, headerY, { size: sectionTitleSize, weight: "700" });
+    let rowY = headerY + paperPx(22);
+    drawLine(ctx, left, rowY - paperPx(3), right, rowY - paperPx(3), { color: "#e4e4e7", width: 1 });
+    drawText(ctx, "Naziv", left, rowY, { size: rowFontSize, weight: "700", color: muted });
+    drawText(ctx, "Količina", left + nameWidth + gap, rowY, { size: rowFontSize, weight: "700", color: muted });
+    drawText(ctx, "Enota", left + nameWidth + gap + quantityWidth + gap, rowY, { size: rowFontSize, weight: "700", color: muted });
+    drawText(ctx, "Tag", left + nameWidth + gap + quantityWidth + gap + unitWidth + gap, rowY, {
+      size: rowFontSize,
+      weight: "700",
+      color: muted
+    });
+    drawText(ctx, "Vrednost", right, rowY, { size: rowFontSize, weight: "700", color: muted, align: "right" });
+    rowY += paperPx(16);
+    drawLine(ctx, left, rowY, right, rowY, { color: "#e4e4e7", width: 1 });
+
+    items.forEach((item, index) => {
+      const tagLabel = String(item?.tagLabel || item?.tagId || "").trim() || "Brez taga";
+      const lineY = rowY + paperPx(9);
+      drawText(ctx, `${index + 1}.`, left, lineY, { size: rowFontSize, weight: "700" });
+      drawText(ctx, fitText(ctx, item?.name || "Brez naziva", nameWidth - paperPx(16), { size: rowFontSize }), left + paperPx(16), lineY, {
+        size: rowFontSize,
+        weight: "600"
+      });
+      drawText(ctx, fitText(ctx, item?.quantity || "—", quantityWidth - paperPx(4), { size: rowFontSize }), left + nameWidth + gap, lineY, {
+        size: rowFontSize
+      });
+      drawText(ctx, fitText(ctx, item?.unit || "—", unitWidth - paperPx(4), { size: rowFontSize }), left + nameWidth + gap + quantityWidth + gap, lineY, {
+        size: rowFontSize
+      });
+      drawText(
+        ctx,
+        fitText(ctx, tagLabel, tagWidth - paperPx(6), { size: rowFontSize }),
+        left + nameWidth + gap + quantityWidth + gap + unitWidth + gap,
+        lineY,
+        {
+          size: rowFontSize,
+          color: muted
+        }
+      );
+      drawText(ctx, formatCurrency(item?.valueCents || 0), right, lineY, { size: rowFontSize, weight: "700", align: "right" });
+      rowY += rowLineHeight;
+      drawLine(ctx, left, rowY - paperPx(4), right, rowY - paperPx(4), { color: "#f1f1f4", width: 1 });
+    });
+
+    y = rowY + paperPx(8);
+  } else {
+    y = tableTop + paperPx(8);
+  }
+
   const companyLabel = "Podjetje:";
   drawText(ctx, companyLabel, left, y, { size: bodySize });
   drawText(ctx, proposal.company || "", left + measureText(ctx, companyLabel, { size: bodySize }) + paperPx(8), y, {

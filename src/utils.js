@@ -6,6 +6,132 @@ export const DEFAULTS = {
   jobTitle: "Vodja kovinarskega laba"
 };
 
+export const DEFAULT_PURCHASE_TAGS = [
+  {
+    id: "potrosni-material",
+    label: "Potrošni material",
+    description:
+      "Material, ki se pri delu porabi, obrabi ali vgradi v izdelek. Primeri: brusni papir, vijaki, lepilo, plin, pločevina, cevi, elektrode.",
+    isDefault: true
+  },
+  {
+    id: "osnovna-sredstva",
+    label: "Osnovna sredstva",
+    description:
+      "Večja oprema ali naprave z daljšo življenjsko dobo in višjo vrednostjo. Primeri: stroji, večja orodja, računalniška oprema, specializirane naprave.",
+    isDefault: true
+  },
+  {
+    id: "drobni-inventar",
+    label: "Drobni inventar",
+    description:
+      "Manjša oprema ali orodje, ki se ne porabi takoj, vendar običajno nima vrednosti osnovnega sredstva. Primeri: ročno orodje, merilni pripomočki, primeži, manjši nastavki.",
+    isDefault: true
+  },
+  {
+    id: "trgovsko-blago",
+    label: "Trgovsko blago",
+    description:
+      "Blago, ki se kupi z namenom nadaljnje prodaje ali distribucije brez večje predelave.",
+    isDefault: true
+  },
+  {
+    id: "storitve",
+    label: "Storitve",
+    description:
+      "Delo ali storitev zunanjega izvajalca. Primeri: servis, montaža, razrez, prevoz, svetovanje, popravilo.",
+    isDefault: true
+  }
+];
+
+function normalizeTagText(value) {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function tagLabelKey(value) {
+  return normalizeTagText(value).toLocaleLowerCase("sl-SI");
+}
+
+function cloneTag(tag) {
+  return {
+    id: String(tag?.id || ""),
+    label: normalizeTagText(tag?.label),
+    description: normalizeTagText(tag?.description),
+    isDefault: Boolean(tag?.isDefault)
+  };
+}
+
+export function normalizeCustomPurchaseTags(tags) {
+  if (!Array.isArray(tags)) return [];
+
+  const usedLabels = new Set(DEFAULT_PURCHASE_TAGS.map((tag) => tagLabelKey(tag.label)));
+  const usedIds = new Set(DEFAULT_PURCHASE_TAGS.map((tag) => String(tag.id || "")));
+
+  return tags
+    .map((tag) => ({
+      id: String(tag?.id || generateId("tag")),
+      label: normalizeTagText(tag?.label),
+      description: normalizeTagText(tag?.description),
+      isDefault: false
+    }))
+    .filter((tag) => tag.label)
+    .filter((tag) => {
+      const key = tagLabelKey(tag.label);
+      if (usedLabels.has(key) || usedIds.has(tag.id)) return false;
+      usedLabels.add(key);
+      usedIds.add(tag.id);
+      return true;
+    });
+}
+
+export function buildPurchaseTagCatalog(customTags = []) {
+  return [...DEFAULT_PURCHASE_TAGS.map(cloneTag), ...normalizeCustomPurchaseTags(customTags)];
+}
+
+export function findPurchaseTag(tagCatalog, tagId) {
+  const source = Array.isArray(tagCatalog) ? tagCatalog : DEFAULT_PURCHASE_TAGS;
+  return source.find((tag) => String(tag?.id || "") === String(tagId || "")) || null;
+}
+
+export function createBlankItem(lastItem, tagCatalog = []) {
+  const lastTag = lastItem?.tagId ? findPurchaseTag(tagCatalog, lastItem.tagId) : null;
+  return {
+    id: "",
+    name: "",
+    quantity: "",
+    unit: "",
+    valueCents: 0,
+    tagId: lastTag?.id || "",
+    tagLabel: lastTag?.label || "",
+    tagDescription: lastTag?.description || ""
+  };
+}
+
+export function normalizeProposalItems(items, tagCatalog = []) {
+  if (!Array.isArray(items)) return [];
+
+  return items.map((item) => {
+    const stored = {
+      id: String(item?.id || generateId("item")),
+      name: normalizeTagText(item?.name),
+      quantity: normalizeTagText(item?.quantity),
+      unit: normalizeTagText(item?.unit),
+      valueCents: Number.isFinite(Number(item?.valueCents)) ? Math.max(0, Math.round(Number(item?.valueCents))) : 0,
+      tagId: String(item?.tagId || ""),
+      tagLabel: normalizeTagText(item?.tagLabel),
+      tagDescription: normalizeTagText(item?.tagDescription)
+    };
+
+    const resolvedTag = stored.tagId ? findPurchaseTag(tagCatalog, stored.tagId) : null;
+    return {
+      ...stored,
+      tagId: resolvedTag?.id || stored.tagId,
+      tagLabel: resolvedTag?.label || stored.tagLabel,
+      tagDescription: resolvedTag?.description || stored.tagDescription
+    };
+  });
+}
+
 export function generateId(prefix = "doc") {
   const random = crypto.getRandomValues(new Uint32Array(2));
   return `${prefix}_${Date.now().toString(36)}_${Array.from(random, (value) => value.toString(36)).join("")}`;
@@ -355,6 +481,7 @@ export function createBlankProposal(lastProposal) {
     directorName: DEFAULTS.directorName,
     directorRole: DEFAULTS.directorRole,
     offerAttachmentId: "",
+    items: [],
     createdAt: "",
     updatedAt: ""
   };
@@ -390,6 +517,44 @@ export function validateProposalRequiredFields(proposal) {
     message: valid ? "" : "Pred nadaljevanjem izpolnite vsa obvezna polja.",
     fields,
     firstInvalidField
+  };
+}
+
+function normalizeItemFieldKey(itemId, field) {
+  return `item-${String(itemId || "row")}-${field}`;
+}
+
+export function validateProposalItems(items) {
+  const fields = {};
+  let firstInvalidSelector = "";
+
+  const rows = Array.isArray(items) ? items : [];
+  rows.forEach((item, index) => {
+    const itemId = String(item?.id || `row-${index + 1}`);
+    const fieldChecks = [
+      ["name", isFilledText(item?.name)],
+      ["quantity", isFilledText(item?.quantity)],
+      ["unit", isFilledText(item?.unit)],
+      ["valueCents", Number.isFinite(Number(item?.valueCents)) && Number(item?.valueCents) > 0],
+      ["tagId", isFilledText(item?.tagId) || isFilledText(item?.tagLabel)]
+    ];
+
+    fieldChecks.forEach(([field, isValid]) => {
+      if (isValid) return;
+      const key = normalizeItemFieldKey(itemId, field);
+      fields[key] = "To polje je obvezno.";
+      if (!firstInvalidSelector) {
+        firstInvalidSelector = `[data-item-row-id="${itemId}"] [data-item-field="${field}"]`;
+      }
+    });
+  });
+
+  const valid = Object.keys(fields).length === 0;
+  return {
+    valid,
+    message: valid ? "" : "Pred nadaljevanjem izpolnite vsa obvezna polja.",
+    fields,
+    firstInvalidSelector
   };
 }
 

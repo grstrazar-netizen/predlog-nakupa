@@ -2,17 +2,23 @@ import {
   DEFAULTS,
   centsToInputValue,
   createBlankProposal,
+  createBlankItem,
   deriveLabCodeFromName,
   downloadBlob,
   extractEuroTotalCents,
   formatCurrency,
   generateId,
+  buildPurchaseTagCatalog,
+  findPurchaseTag,
   normalizeLabCode,
+  normalizeCustomPurchaseTags,
   parseMoneyToCents,
+  normalizeProposalItems,
   proposalWithSaveMetadata,
   safeFileName,
   sortRecent,
   validateProposalRequiredFields,
+  validateProposalItems,
   spendingBreakdownForYear,
   spendingForYear,
   uniqueSuggestions,
@@ -23,7 +29,9 @@ import {
   deleteProposal,
   getAllProposals,
   getAttachment,
+  getAsset,
   saveAttachment,
+  saveAsset,
   saveProposal
 } from "./db.js";
 import { createCombinedPdfBlob } from "./pdf.js";
@@ -40,6 +48,7 @@ const state = {
   proposals: [],
   current: createBlankProposal(),
   attachment: null,
+  customTags: [],
   historyModalOpen: false,
   toolsPanelOpen: false,
   statusMenu: null,
@@ -52,6 +61,12 @@ const state = {
     step: 0,
     labName: "",
     labCodePreview: DEFAULTS.labCode
+  },
+  tagEditor: {
+    id: "",
+    name: "",
+    description: "",
+    error: ""
   },
   dirty: false,
   busy: false,
@@ -75,6 +90,7 @@ let toolbarTooltipDelayArmed = false;
 let suppressedRecentClickId = "";
 let beforeUnloadBound = false;
 const ONBOARDING_STORAGE_KEY = "predlog-nakupa:onboarding-complete:v1";
+const CUSTOM_TAGS_ASSET_ID = "purchase-item-tags";
 const DOCUMENT_POPOVER_HOVER_DELAY_MS = 1000;
 const RECENT_DELETE_DRAG_DISTANCE = 92;
 const EXPLANATION_EMPTY_EXAMPLE_LINES = [
@@ -149,6 +165,20 @@ function icon(name) {
 
 function documentStatusOption(value) {
   return DOCUMENT_STATUS_OPTIONS.find((option) => option.value === value) || DOCUMENT_STATUS_OPTIONS[0];
+}
+
+function getPurchaseTagCatalog() {
+  return buildPurchaseTagCatalog(state.customTags);
+}
+
+function resolvePurchaseTag(tagId, tagLabel = "", tagDescription = "") {
+  const resolved = findPurchaseTag(getPurchaseTagCatalog(), tagId);
+  return {
+    id: resolved?.id || String(tagId || ""),
+    label: resolved?.label || String(tagLabel || ""),
+    description: resolved?.description || String(tagDescription || ""),
+    isDefault: Boolean(resolved?.isDefault)
+  };
 }
 
 function renderDocumentRow(proposal, { modal = false } = {}) {
@@ -336,6 +366,246 @@ function renderSpendingBreakdown(breakdown, totalCents) {
         )
         .join("")}
     </span>
+  `;
+}
+
+function renderItemsPreviewSection() {
+  const items = currentItems();
+  if (!items.length) return "";
+
+  return `
+    <section class="paper-items-block" aria-label="Postavke nakupa">
+      <div class="paper-items-head">
+        <span>Postavke nakupa</span>
+        <span>Tag</span>
+      </div>
+      <div class="paper-items-table">
+        ${items
+          .map((item, index) => {
+            const tag = resolvePurchaseTag(item.tagId, item.tagLabel, item.tagDescription);
+            return `
+              <div class="paper-item-row">
+                <span class="paper-item-index">${index + 1}.</span>
+                <span class="paper-item-name">${escapeHtml(item.name || "Brez naziva")}</span>
+                <span class="paper-item-quantity">${escapeHtml(item.quantity || "—")}</span>
+                <span class="paper-item-unit">${escapeHtml(item.unit || "—")}</span>
+                <span class="paper-item-tag" title="${escapeHtml(tag.description)}">${escapeHtml(tag.label || "Brez taga")}</span>
+                <span class="paper-item-value">${formatCurrency(item.valueCents || 0)}</span>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderItemEditorRow(item, index, tagCatalog) {
+  const resolvedTag = resolvePurchaseTag(item.tagId, item.tagLabel, item.tagDescription);
+  const tagOptions = tagCatalog
+    .map((tag) => {
+      const selected = String(tag.id || "") === String(item.tagId || "");
+      return `<option value="${escapeHtml(tag.id)}"${selected ? " selected" : ""}>${escapeHtml(tag.label)}</option>`;
+    })
+    .join("");
+  const selectedTagMissing = item.tagId && !tagCatalog.some((tag) => String(tag.id || "") === String(item.tagId || ""));
+  const missingTagOption = selectedTagMissing
+    ? `<option value="${escapeHtml(item.tagId)}" selected>Izbran tag: ${escapeHtml(item.tagLabel || "brez imena")}</option>`
+    : "";
+
+  return `
+    <div class="item-editor-row" data-item-row data-item-row-id="${escapeHtml(item.id)}">
+      <div class="item-editor-row-head">
+        <span class="item-editor-row-title">Postavka ${index + 1}</span>
+        <button class="button button-icon-only button-ghost" type="button" data-action="remove-item" data-item-id="${escapeHtml(item.id)}" aria-label="Odstrani postavko">
+          ${icon("trash-2")}
+        </button>
+      </div>
+
+      <div class="item-editor-grid">
+        <span class="smart-field">
+          <label for="item-name-${escapeHtml(item.id)}">Naziv</label>
+          <input
+            class="${itemValidationControlClass("doc-field", item.id, "name")}"
+            id="item-name-${escapeHtml(item.id)}"
+            data-item-row-id="${escapeHtml(item.id)}"
+            data-item-field="name"
+            value="${escapeHtml(item.name)}"
+            placeholder="Npr. brusni papir"
+            ${itemValidationControlAttrs(item.id, "name")}
+          />
+          ${renderItemFieldError(item.id, "name")}
+        </span>
+
+        <span class="smart-field">
+          <label for="item-quantity-${escapeHtml(item.id)}">Količina</label>
+          <input
+            class="${itemValidationControlClass("doc-field", item.id, "quantity")}"
+            id="item-quantity-${escapeHtml(item.id)}"
+            data-item-row-id="${escapeHtml(item.id)}"
+            data-item-field="quantity"
+            value="${escapeHtml(item.quantity)}"
+            placeholder="Npr. 2"
+            inputmode="decimal"
+            ${itemValidationControlAttrs(item.id, "quantity")}
+          />
+          ${renderItemFieldError(item.id, "quantity")}
+        </span>
+
+        <span class="smart-field">
+          <label for="item-unit-${escapeHtml(item.id)}">Enota</label>
+          <input
+            class="${itemValidationControlClass("doc-field", item.id, "unit")}"
+            id="item-unit-${escapeHtml(item.id)}"
+            data-item-row-id="${escapeHtml(item.id)}"
+            data-item-field="unit"
+            value="${escapeHtml(item.unit)}"
+            placeholder="kos, m, kg ..."
+            ${itemValidationControlAttrs(item.id, "unit")}
+          />
+          ${renderItemFieldError(item.id, "unit")}
+        </span>
+
+        <span class="smart-field">
+          <label for="item-value-${escapeHtml(item.id)}">Vrednost</label>
+          <input
+            class="${itemValidationControlClass("doc-field amount-field item-value-field", item.id, "valueCents")}"
+            id="item-value-${escapeHtml(item.id)}"
+            data-item-row-id="${escapeHtml(item.id)}"
+            data-item-field="valueCents"
+            inputmode="decimal"
+            value="${escapeHtml(centsToInputValue(item.valueCents))}"
+            placeholder="0,00"
+            ${itemValidationControlAttrs(item.id, "valueCents")}
+          />
+          ${renderItemFieldError(item.id, "valueCents")}
+        </span>
+
+        <span class="smart-field item-tag-field">
+          <label for="item-tag-${escapeHtml(item.id)}">Tag</label>
+          <select
+            class="${itemValidationControlClass("doc-field item-tag-select", item.id, "tagId")}"
+            id="item-tag-${escapeHtml(item.id)}"
+            data-item-row-id="${escapeHtml(item.id)}"
+            data-item-field="tagId"
+            ${itemValidationControlAttrs(item.id, "tagId")}
+          >
+            <option value="">Izberi tag</option>
+            ${missingTagOption}
+            ${tagOptions}
+          </select>
+          ${renderItemFieldError(item.id, "tagId")}
+          <small class="item-tag-helper">${escapeHtml(resolvedTag.description || "Izberi tag, da se prikaže kratek opis uporabe.")}</small>
+        </span>
+      </div>
+    </div>
+  `;
+}
+
+function renderItemEditorSection() {
+  const items = currentItems();
+  const tagCatalog = getPurchaseTagCatalog();
+
+  return `
+    <section class="panel">
+      <div class="panel-header">
+        <span class="panel-icon">${icon("list")}</span>
+        <span class="panel-title">Postavke nakupa</span>
+        <button class="button button-icon-only button-ghost" type="button" data-action="add-item" aria-label="Dodaj postavko">
+          ${icon("plus")}
+        </button>
+      </div>
+      <div class="panel-body">
+        ${
+          items.length
+            ? items.map((item, index) => renderItemEditorRow(item, index, tagCatalog)).join("")
+            : `<p class="empty-text">Dodaj postavko, da ji določiš naziv, količino, enoto, vrednost in kategorijo nakupa.</p>`
+        }
+        <button class="button button-outline" type="button" data-action="add-item">
+          ${icon("plus")}
+          <span>Dodaj postavko</span>
+        </button>
+      </div>
+    </section>
+  `;
+}
+
+function renderTagManagerSection() {
+  const editor = currentTagEditor();
+  const customTags = [...state.customTags].sort((a, b) => a.label.localeCompare(b.label, "sl-SI"));
+  const nameInvalid = Boolean(editor.error) && (!editor.name.trim() || editor.error === "Tag že obstaja.");
+  const descriptionInvalid = Boolean(editor.error) && !editor.description.trim();
+
+  return `
+    <section class="panel">
+      <div class="panel-header">
+        <span class="panel-icon">${icon("tag")}</span>
+        <span class="panel-title">Lastni tagi</span>
+      </div>
+      <div class="panel-body">
+        <p class="empty-text">
+          Privzeti tagi so vedno na voljo. Tukaj lahko dodaš svoje oznake in jim dodeliš kratek opis.
+        </p>
+        <div class="tag-editor">
+          <span class="smart-field">
+            <label for="tagName">Ime taga</label>
+            <input
+              class="doc-field${nameInvalid ? " is-invalid" : ""}"
+              id="tagName"
+              data-tag-field="name"
+              value="${escapeHtml(editor.name)}"
+              placeholder="Npr. Prevoz"
+              ${nameInvalid ? 'aria-invalid="true"' : ""}
+            />
+          </span>
+          <span class="smart-field">
+            <label for="tagDescription">Kratek opis uporabe</label>
+            <textarea
+              class="doc-textarea tag-description${descriptionInvalid ? " is-invalid" : ""}"
+              id="tagDescription"
+              data-tag-field="description"
+              rows="3"
+              placeholder="Kdaj uporabiti ta tag ..."
+              ${descriptionInvalid ? 'aria-invalid="true"' : ""}
+            >${escapeHtml(editor.description)}</textarea>
+          </span>
+          ${editor.error ? `<p class="field-error">${escapeHtml(editor.error)}</p>` : ""}
+          <div class="tag-editor-actions">
+            ${editor.id ? `<button class="button button-outline" type="button" data-action="cancel-tag-edit">Prekliči</button>` : ""}
+            <button class="button button-solid" type="button" data-action="save-tag">
+              ${editor.id ? "Shrani spremembe" : "Dodaj tag"}
+            </button>
+          </div>
+        </div>
+
+        ${
+          customTags.length
+            ? `<div class="custom-tag-list">
+                ${customTags
+                  .map(
+                    (tag) => `
+                      <div class="custom-tag-row">
+                        <div class="custom-tag-copy">
+                          <strong>${escapeHtml(tag.label)}</strong>
+                          <span>${escapeHtml(tag.description)}</span>
+                        </div>
+                        <div class="custom-tag-actions">
+                          <button class="button button-icon-only button-ghost" type="button" data-action="start-tag-edit" data-tag-id="${escapeHtml(tag.id)}" aria-label="Uredi tag">
+                            ${icon("pencil")}
+                          </button>
+                          <button class="button button-icon-only button-ghost" type="button" data-action="delete-tag" data-tag-id="${escapeHtml(tag.id)}" aria-label="Izbriši tag">
+                            ${icon("trash-2")}
+                          </button>
+                        </div>
+                      </div>
+                    `
+                  )
+                  .join("")}
+              </div>`
+            : `<p class="empty-text">Ni še lastnih tagov.</p>`
+        }
+      </div>
+    </section>
   `;
 }
 
@@ -598,6 +868,36 @@ function renderFieldError(fieldName) {
   return message ? `<p class="field-error" id="${validationFieldId(fieldName)}">${escapeHtml(message)}</p>` : "";
 }
 
+function itemValidationKey(itemId, fieldName) {
+  return `item-${String(itemId || "row")}-${fieldName}`;
+}
+
+function itemValidationFieldError(itemId, fieldName) {
+  return state.validation.fields?.[itemValidationKey(itemId, fieldName)] || "";
+}
+
+function itemValidationFieldIsInvalid(itemId, fieldName) {
+  return Boolean(itemValidationFieldError(itemId, fieldName));
+}
+
+function itemValidationFieldId(itemId, fieldName) {
+  return `validation-error-${itemValidationKey(itemId, fieldName)}`;
+}
+
+function itemValidationControlAttrs(itemId, fieldName) {
+  if (!itemValidationFieldIsInvalid(itemId, fieldName)) return "";
+  return `aria-invalid="true" aria-describedby="${itemValidationFieldId(itemId, fieldName)}"`;
+}
+
+function itemValidationControlClass(baseClass, itemId, fieldName) {
+  return `${baseClass}${itemValidationFieldIsInvalid(itemId, fieldName) ? " is-invalid" : ""}`;
+}
+
+function renderItemFieldError(itemId, fieldName) {
+  const message = itemValidationFieldError(itemId, fieldName);
+  return message ? `<p class="field-error" id="${itemValidationFieldId(itemId, fieldName)}">${escapeHtml(message)}</p>` : "";
+}
+
 function validationTargetSelector(fieldName) {
   const selectors = {
     fullName: "#fullName",
@@ -613,59 +913,7 @@ function validationTargetSelector(fieldName) {
 }
 
 function validateDynamicItemRows() {
-  const rows = Array.from(document.querySelectorAll("[data-item-row]"));
-  if (!rows.length) {
-    return {
-      fields: {},
-      firstInvalidSelector: ""
-    };
-  }
-
-  const fields = {};
-  let firstInvalidSelector = "";
-  const requiredFields = [
-    { field: "name", aliases: ["naziv", "name", "postavka"] },
-    { field: "quantity", aliases: ["kolicina", "količina", "quantity"] },
-    { field: "unit", aliases: ["enota", "unit"] },
-    { field: "estimatedValueCents", aliases: ["price", "cena", "value", "estimatedValue"] },
-    { field: "purpose", aliases: ["purpose", "namen", "obrazložitev", "explanation"] }
-  ];
-
-  rows.forEach((row, rowIndex) => {
-    requiredFields.forEach(({ field, aliases }) => {
-      const candidate = [
-        `[data-item-field="${field}"]`,
-        ...aliases.map((alias) => `[data-item-field="${alias}"]`)
-      ]
-        .map((selector) => row.querySelector(selector))
-        .find(Boolean);
-
-      if (!candidate) return;
-
-      const isFilled =
-        candidate.type === "checkbox" || candidate.type === "radio"
-          ? candidate.checked
-          : candidate.dataset.value !== undefined
-            ? String(candidate.dataset.value || "").trim().length > 0
-            : candidate.value != null && String(candidate.value).trim().length > 0;
-
-      if (isFilled) return;
-
-      const key = `item-${row.dataset.itemRowId || rowIndex}-${field}`;
-      fields[key] = "To polje je obvezno.";
-      if (!firstInvalidSelector) {
-        const rowSelector = row.dataset.itemRowId
-          ? `[data-item-row-id="${String(row.dataset.itemRowId).replaceAll('"', '\\"')}"]`
-          : `[data-item-row]:nth-of-type(${rowIndex + 1})`;
-        firstInvalidSelector = `${rowSelector} [data-item-field="${field}"]`;
-      }
-    });
-  });
-
-  return {
-    fields,
-    firstInvalidSelector
-  };
+  return validateProposalItems(state.current.items);
 }
 
 function validateCurrentDocument() {
@@ -675,21 +923,23 @@ function validateCurrentDocument() {
     ...baseValidation.fields,
     ...itemValidation.fields
   };
+  const firstItemFieldKey = Object.keys(itemValidation.fields || {})[0] || "";
   const valid = Object.keys(fields).length === 0;
 
   return {
     valid,
     message: valid ? "" : "Pred nadaljevanjem izpolnite vsa obvezna polja.",
     fields,
-    firstInvalidField: baseValidation.firstInvalidField || (itemValidation.firstInvalidSelector ? "" : ""),
-    firstInvalidSelector:
-      itemValidation.firstInvalidSelector || validationTargetSelector(baseValidation.firstInvalidField)
+    firstInvalidField: baseValidation.firstInvalidField || firstItemFieldKey,
+    firstInvalidSelector: baseValidation.firstInvalidField
+      ? validationTargetSelector(baseValidation.firstInvalidField)
+      : itemValidation.firstInvalidSelector
   };
 }
 
 function prepareValidationFocus(validation) {
   const selector = validation?.firstInvalidSelector || validationTargetSelector(validation?.firstInvalidField);
-  if (selector === "#labCode") {
+  if (selector === "#labCode" || selector.startsWith?.("[data-item-row") || selector.startsWith?.("[data-tag-editor")) {
     state.toolsPanelOpen = true;
   }
 }
@@ -838,6 +1088,8 @@ function render() {
                 ${renderFieldError("explanation")}
               </span>
             </div>
+
+            ${renderItemsPreviewSection()}
 
             <div class="doc-line">
               <label for="company">Podjetje:</label>
@@ -1003,6 +1255,9 @@ function render() {
               </div>
             </div>
           </section>
+
+          ${renderItemEditorSection()}
+          ${renderTagManagerSection()}
         </aside>
       </section>
 
@@ -1115,8 +1370,35 @@ function bindEvents() {
     }
   });
 
+  document.querySelectorAll("[data-item-field]").forEach((field) => {
+    const applyChange = (event) => {
+      const itemId = event.currentTarget.dataset.itemRowId;
+      const fieldName = event.currentTarget.dataset.itemField;
+      if (!itemId || !fieldName) return;
+      updateItemField(itemId, fieldName, event.currentTarget.value);
+      if (fieldName === "tagId") {
+        render();
+      }
+    };
+
+    if (field.dataset.itemField === "tagId") {
+      field.addEventListener("change", applyChange);
+    } else {
+      field.addEventListener("input", applyChange);
+      field.addEventListener("change", applyChange);
+    }
+  });
+
+  document.querySelectorAll("[data-tag-field]").forEach((field) => {
+    field.addEventListener("input", (event) => {
+      const fieldName = event.currentTarget.dataset.tagField;
+      if (!fieldName) return;
+      updateTagEditorField(fieldName, event.currentTarget.value);
+    });
+  });
+
   document.querySelectorAll("[data-action]").forEach((button) => {
-    button.addEventListener("click", () => handleAction(button.dataset.action));
+    button.addEventListener("click", () => handleAction(button.dataset.action, button));
   });
 
   document.querySelectorAll("[data-load-id]").forEach((button) => {
@@ -1351,6 +1633,189 @@ function handleToolbarTooltipFirstShow(event) {
   window.setTimeout(() => {
     document.documentElement.classList.add("toolbar-tooltip-delay-enabled");
   }, 180);
+}
+
+function currentItems() {
+  return Array.isArray(state.current.items) ? state.current.items : [];
+}
+
+function updateCurrentItems(items, { rerender = false } = {}) {
+  state.current.items = items;
+  markDirty();
+  if (rerender) render();
+}
+
+function createItemFromTemplate(template) {
+  const item = createBlankItem(template, getPurchaseTagCatalog());
+  return {
+    ...item,
+    id: generateId("item")
+  };
+}
+
+function addItem() {
+  const items = currentItems();
+  const template = items[items.length - 1] || null;
+  const next = [...items, createItemFromTemplate(template)];
+  const nextItemId = next[next.length - 1]?.id || "";
+  updateCurrentItems(next, { rerender: true });
+  window.requestAnimationFrame(() => {
+    if (!nextItemId) return;
+    document.querySelector(`[data-item-row-id="${nextItemId}"] [data-item-field="name"]`)?.focus();
+  });
+}
+
+function setItemTagSnapshot(item, tagId) {
+  const tag = resolvePurchaseTag(tagId);
+  return {
+    ...item,
+    tagId: tag.id,
+    tagLabel: tag.label,
+    tagDescription: tag.description
+  };
+}
+
+function updateItemField(itemId, fieldName, rawValue) {
+  const items = currentItems().map((item) => {
+    if (item.id !== itemId) return item;
+    if (fieldName === "valueCents") {
+      return {
+        ...item,
+        valueCents: parseMoneyToCents(rawValue)
+      };
+    }
+    if (fieldName === "tagId") {
+      return setItemTagSnapshot(item, rawValue);
+    }
+    return {
+      ...item,
+      [fieldName]: rawValue
+    };
+  });
+  updateCurrentItems(items);
+}
+
+function removeItem(itemId) {
+  const items = currentItems().filter((item) => item.id !== itemId);
+  updateCurrentItems(items.length ? items : [], { rerender: true });
+}
+
+function currentTagEditor() {
+  return state.tagEditor || { id: "", name: "", description: "", error: "" };
+}
+
+function resetTagEditor() {
+  state.tagEditor = {
+    id: "",
+    name: "",
+    description: "",
+    error: ""
+  };
+}
+
+function startTagEdit(tagId) {
+  const tag = state.customTags.find((item) => item.id === tagId);
+  if (!tag) return;
+  state.tagEditor = {
+    id: tag.id,
+    name: tag.label,
+    description: tag.description,
+    error: ""
+  };
+  render();
+  window.requestAnimationFrame(() => {
+    document.querySelector("[data-tag-field='name']")?.focus();
+  });
+}
+
+function updateTagEditorField(fieldName, value) {
+  state.tagEditor = {
+    ...currentTagEditor(),
+    [fieldName]: value,
+    error: ""
+  };
+}
+
+async function saveTagEditor() {
+  const editor = currentTagEditor();
+  const name = String(editor.name || "").trim();
+  const description = String(editor.description || "").trim();
+
+  if (!name) {
+    state.tagEditor = {
+      ...editor,
+      error: "Ime taga je obvezno."
+    };
+    render();
+    window.requestAnimationFrame(() => document.querySelector("[data-tag-field='name']")?.focus());
+    return;
+  }
+
+  if (!description) {
+    state.tagEditor = {
+      ...editor,
+      error: "Opis je obvezen."
+    };
+    render();
+    window.requestAnimationFrame(() => document.querySelector("[data-tag-field='description']")?.focus());
+    return;
+  }
+
+  const tagCatalog = getPurchaseTagCatalog();
+  const duplicate = tagCatalog.some((tag) => {
+    if (tag.isDefault) return tag.label.toLocaleLowerCase("sl-SI") === name.toLocaleLowerCase("sl-SI");
+    if (editor.id && tag.id === editor.id) return false;
+    return tag.label.toLocaleLowerCase("sl-SI") === name.toLocaleLowerCase("sl-SI");
+  });
+
+  if (duplicate) {
+    state.tagEditor = {
+      ...editor,
+      error: "Tag že obstaja."
+    };
+    render();
+    window.requestAnimationFrame(() => document.querySelector("[data-tag-field='name']")?.focus());
+    return;
+  }
+
+  const customTags = [...state.customTags];
+  if (editor.id) {
+    const index = customTags.findIndex((tag) => tag.id === editor.id);
+    if (index >= 0) {
+      customTags[index] = {
+        ...customTags[index],
+        label: name,
+        description
+      };
+    }
+  } else {
+    customTags.push({
+      id: generateId("tag"),
+      label: name,
+      description,
+      isDefault: false
+    });
+  }
+
+  const normalized = buildPurchaseTagCatalog(customTags).filter((tag) => !tag.isDefault);
+  await saveCustomTags(normalized);
+  resetTagEditor();
+  render();
+  showToast(editor.id ? "Tag je posodobljen." : "Tag je dodan.");
+}
+
+async function deleteCustomTag(tagId) {
+  const tag = state.customTags.find((item) => item.id === tagId);
+  if (!tag) return;
+
+  const confirmed = window.confirm(`Izbrišem tag "${tag.label}"?`);
+  if (!confirmed) return;
+
+  const normalized = state.customTags.filter((item) => item.id !== tagId);
+  await saveCustomTags(normalized);
+  if (state.tagEditor.id === tagId) resetTagEditor();
+  render();
+  showToast("Tag je odstranjen.");
 }
 
 function randomLabCode() {
@@ -1611,7 +2076,7 @@ function showSuggestions(input) {
   wrapper.append(popover);
 }
 
-async function handleAction(action) {
+async function handleAction(action, source = null) {
   try {
     if (isOnboardingCalculatorDemoStep()) {
       stopOnboardingCalculatorDemo({ restore: true });
@@ -1621,10 +2086,26 @@ async function handleAction(action) {
       await newDocument();
     } else if (action === "save") {
       await saveCurrentDocument();
+    } else if (action === "add-item") {
+      addItem();
+    } else if (action === "remove-item") {
+      const itemId = source?.dataset?.itemId;
+      if (itemId) removeItem(itemId);
     } else if (action === "attach") {
       document.getElementById("offerInput")?.click();
     } else if (action === "remove-attachment") {
       await removeAttachment();
+    } else if (action === "save-tag") {
+      await saveTagEditor();
+    } else if (action === "start-tag-edit") {
+      const tagId = source?.dataset?.tagId;
+      if (tagId) startTagEdit(tagId);
+    } else if (action === "delete-tag") {
+      const tagId = source?.dataset?.tagId;
+      if (tagId) await deleteCustomTag(tagId);
+    } else if (action === "cancel-tag-edit") {
+      resetTagEditor();
+      render();
     } else if (action === "download") {
       await exportPdf("download");
     } else if (action === "print") {
@@ -1756,6 +2237,35 @@ function closeStatusMenu() {
   if (!state.statusMenu) return;
   state.statusMenu = null;
   render();
+}
+
+async function loadCustomTags() {
+  const asset = await getAsset(CUSTOM_TAGS_ASSET_ID);
+  return normalizeCustomPurchaseTags(asset?.tags);
+}
+
+async function saveCustomTags(tags) {
+  const normalized = normalizeCustomPurchaseTags(tags);
+  await saveAsset({
+    id: CUSTOM_TAGS_ASSET_ID,
+    tags: normalized,
+    updatedAt: new Date().toISOString()
+  });
+  state.customTags = normalized;
+}
+
+function normalizeProposalForState(proposal) {
+  return {
+    ...proposal,
+    items: normalizeProposalItems(proposal?.items, getPurchaseTagCatalog())
+  };
+}
+
+function normalizeProposalForSave(proposal) {
+  return {
+    ...proposal,
+    items: normalizeProposalItems(proposal?.items, getPurchaseTagCatalog())
+  };
 }
 
 function consumeSuppressedRecentClick(proposalId) {
@@ -1969,7 +2479,8 @@ async function saveCurrentDocument({ silent = false } = {}) {
 
   clearValidation();
   const proposals = await getAllProposals();
-  const saved = proposalWithSaveMetadata(state.current, proposals);
+  const preparedCurrent = normalizeProposalForSave(state.current);
+  const saved = proposalWithSaveMetadata(preparedCurrent, proposals);
   await saveProposal(saved);
   state.current = saved;
   state.proposals = sortRecent(await getAllProposals());
@@ -1986,7 +2497,7 @@ async function loadExistingDocument(id, { skipUnsavedGuard = false } = {}) {
   }
   const proposal = state.proposals.find((item) => item.id === id);
   if (!proposal) return;
-  state.current = { ...proposal };
+  state.current = normalizeProposalForState({ ...proposal });
   state.attachment = await getAttachment(proposal.offerAttachmentId);
   state.historyModalOpen = false;
   state.statusMenu = null;
@@ -2109,7 +2620,8 @@ async function clearLocalPreviewServiceWorker() {
 }
 
 async function init() {
-  state.proposals = sortRecent(await getAllProposals());
+  state.customTags = await loadCustomTags();
+  state.proposals = sortRecent(await getAllProposals()).map((proposal) => normalizeProposalForState(proposal));
   const last = state.proposals[0];
   state.current = last ? createBlankProposal(last) : createBlankProposal();
   state.attachment = null;
