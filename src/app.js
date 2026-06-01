@@ -612,78 +612,17 @@ function validationTargetSelector(fieldName) {
   return selectors[fieldName] || "";
 }
 
-function validateDynamicItemRows() {
-  const rows = Array.from(document.querySelectorAll("[data-item-row]"));
-  if (!rows.length) {
-    return {
-      fields: {},
-      firstInvalidSelector: ""
-    };
-  }
-
-  const fields = {};
-  let firstInvalidSelector = "";
-  const requiredFields = [
-    { field: "name", aliases: ["naziv", "name", "postavka"] },
-    { field: "quantity", aliases: ["kolicina", "količina", "quantity"] },
-    { field: "unit", aliases: ["enota", "unit"] },
-    { field: "estimatedValueCents", aliases: ["price", "cena", "value", "estimatedValue"] },
-    { field: "purpose", aliases: ["purpose", "namen", "obrazložitev", "explanation"] }
-  ];
-
-  rows.forEach((row, rowIndex) => {
-    requiredFields.forEach(({ field, aliases }) => {
-      const candidate = [
-        `[data-item-field="${field}"]`,
-        ...aliases.map((alias) => `[data-item-field="${alias}"]`)
-      ]
-        .map((selector) => row.querySelector(selector))
-        .find(Boolean);
-
-      if (!candidate) return;
-
-      const isFilled =
-        candidate.type === "checkbox" || candidate.type === "radio"
-          ? candidate.checked
-          : candidate.dataset.value !== undefined
-            ? String(candidate.dataset.value || "").trim().length > 0
-            : candidate.value != null && String(candidate.value).trim().length > 0;
-
-      if (isFilled) return;
-
-      const key = `item-${row.dataset.itemRowId || rowIndex}-${field}`;
-      fields[key] = "To polje je obvezno.";
-      if (!firstInvalidSelector) {
-        const rowSelector = row.dataset.itemRowId
-          ? `[data-item-row-id="${String(row.dataset.itemRowId).replaceAll('"', '\\"')}"]`
-          : `[data-item-row]:nth-of-type(${rowIndex + 1})`;
-        firstInvalidSelector = `${rowSelector} [data-item-field="${field}"]`;
-      }
-    });
-  });
-
-  return {
-    fields,
-    firstInvalidSelector
-  };
-}
-
 function validateCurrentDocument() {
   const baseValidation = validateProposalRequiredFields(state.current);
-  const itemValidation = validateDynamicItemRows();
-  const fields = {
-    ...baseValidation.fields,
-    ...itemValidation.fields
-  };
+  const fields = { ...baseValidation.fields };
   const valid = Object.keys(fields).length === 0;
 
   return {
     valid,
     message: valid ? "" : "Pred nadaljevanjem izpolnite vsa obvezna polja.",
     fields,
-    firstInvalidField: baseValidation.firstInvalidField || (itemValidation.firstInvalidSelector ? "" : ""),
-    firstInvalidSelector:
-      itemValidation.firstInvalidSelector || validationTargetSelector(baseValidation.firstInvalidField)
+    firstInvalidField: baseValidation.firstInvalidField,
+    firstInvalidSelector: validationTargetSelector(baseValidation.firstInvalidField)
   };
 }
 
