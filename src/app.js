@@ -45,6 +45,7 @@ const state = {
   statusMenu: null,
   documentPopover: null,
   deleteConfirmId: "",
+  unsavedPrompt: null,
   onboarding: {
     active: false,
     stage: "",
@@ -72,6 +73,7 @@ let hoverPopoverTimer = 0;
 let recentDeleteDrag = null;
 let toolbarTooltipDelayArmed = false;
 let suppressedRecentClickId = "";
+let beforeUnloadBound = false;
 const ONBOARDING_STORAGE_KEY = "predlog-nakupa:onboarding-complete:v1";
 const DOCUMENT_POPOVER_HOVER_DELAY_MS = 1000;
 const RECENT_DELETE_DRAG_DISTANCE = 92;
@@ -269,6 +271,30 @@ function renderDeleteConfirm() {
           <div class="modal-actions">
             <button class="button button-outline" type="button" data-action="cancel-delete">Prekliči</button>
             <button class="button button-solid button-danger" type="button" data-action="confirm-delete">Izbriši predlog</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderUnsavedPrompt() {
+  if (!state.unsavedPrompt) return "";
+
+  return `
+    <div class="modal-backdrop unsaved-modal-backdrop" data-action="cancel-unsaved" role="presentation">
+      <section class="modal-window unsaved-modal" role="dialog" aria-modal="true" aria-labelledby="unsaved-modal-title" data-modal-window>
+        <header class="modal-header">
+          <h2 class="modal-title" id="unsaved-modal-title">Neshranjene spremembe</h2>
+          <button class="button button-icon-only button-ghost" type="button" data-action="cancel-unsaved" aria-label="Ostani na obrazcu">
+            ${icon("x")}
+          </button>
+        </header>
+        <div class="modal-body delete-modal-body">
+          <p>V obrazcu imate vnesene podatke, ki še niso shranjeni. Če nadaljujete, se lahko izgubijo.</p>
+          <div class="modal-actions">
+            <button class="button button-outline" type="button" data-action="cancel-unsaved">Ostani na obrazcu</button>
+            <button class="button button-solid button-danger" type="button" data-action="confirm-unsaved">Nadaljuj brez shranjevanja</button>
           </div>
         </div>
       </section>
@@ -492,7 +518,36 @@ function centerRogLogoMarkup() {
 }
 
 function markDirty() {
-  state.dirty = true;
+  setDirtyState(true);
+}
+
+function clearDirty() {
+  setDirtyState(false);
+}
+
+function setDirtyState(isDirty) {
+  state.dirty = isDirty;
+  updateBeforeUnloadProtection();
+}
+
+function updateBeforeUnloadProtection() {
+  if (state.dirty && !beforeUnloadBound) {
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    beforeUnloadBound = true;
+    return;
+  }
+
+  if (!state.dirty && beforeUnloadBound) {
+    window.removeEventListener("beforeunload", handleBeforeUnload);
+    beforeUnloadBound = false;
+  }
+}
+
+function handleBeforeUnload(event) {
+  if (!state.dirty) return;
+  event.preventDefault();
+  event.returnValue = "";
+  return "";
 }
 
 function emptyValidationState() {
@@ -993,6 +1048,7 @@ function render() {
       ${renderStatusMenu()}
       ${renderDocumentPopover()}
       ${renderDeleteConfirm()}
+      ${renderUnsavedPrompt()}
       <div class="delete-drag-hint" data-delete-drag-hint aria-hidden="true">Povleci iz kartice</div>
       ${renderOnboarding()}
     </main>
@@ -1585,6 +1641,10 @@ async function handleAction(action) {
       closeDeleteConfirm();
     } else if (action === "confirm-delete") {
       await confirmDeleteProposal();
+    } else if (action === "cancel-unsaved") {
+      closeUnsavedPrompt();
+    } else if (action === "confirm-unsaved") {
+      await continueUnsavedAction();
     }
   } catch (error) {
     console.error(error);
@@ -1615,8 +1675,12 @@ function closeHistoryModal() {
   render();
 }
 
-function openDeleteConfirm(proposalId) {
+function openDeleteConfirm(proposalId, { skipUnsavedGuard = false } = {}) {
   if (!proposalId) return;
+  if (state.dirty && !skipUnsavedGuard && proposalId === state.current.id) {
+    requestUnsavedChanges({ type: "delete", proposalId });
+    return;
+  }
   clearDocumentPopoverTimers();
   closeDocumentPopover();
   state.statusMenu = null;
@@ -1628,6 +1692,32 @@ function closeDeleteConfirm() {
   if (!state.deleteConfirmId) return;
   state.deleteConfirmId = "";
   render();
+}
+
+function requestUnsavedChanges(action) {
+  state.unsavedPrompt = action;
+  render();
+}
+
+function closeUnsavedPrompt() {
+  if (!state.unsavedPrompt) return;
+  state.unsavedPrompt = null;
+  render();
+}
+
+async function continueUnsavedAction() {
+  const action = state.unsavedPrompt;
+  if (!action) return;
+  state.unsavedPrompt = null;
+  render();
+
+  if (action.type === "new") {
+    await newDocument({ skipUnsavedGuard: true });
+  } else if (action.type === "load") {
+    await loadExistingDocument(action.proposalId, { skipUnsavedGuard: true });
+  } else if (action.type === "delete") {
+    openDeleteConfirm(action.proposalId, { skipUnsavedGuard: true });
+  }
 }
 
 async function confirmDeleteProposal() {
@@ -1647,7 +1737,7 @@ async function confirmDeleteProposal() {
   if (state.current.id === proposal.id) {
     state.current = createBlankProposal(state.proposals[0] || proposal);
     state.attachment = null;
-    state.dirty = false;
+    clearDirty();
   }
   state.deleteConfirmId = "";
   state.statusMenu = null;
@@ -1851,8 +1941,9 @@ async function updateDocumentStatus(proposalId, documentStatus) {
   render();
 }
 
-async function newDocument() {
-  if (state.dirty && !window.confirm("Trenutni dokument ima neshranjene spremembe. Ustvarim nov dokument?")) {
+async function newDocument({ skipUnsavedGuard = false } = {}) {
+  if (state.dirty && !skipUnsavedGuard) {
+    requestUnsavedChanges({ type: "new" });
     return;
   }
   const recent = sortRecent(state.proposals)[0] || state.current;
@@ -1861,7 +1952,7 @@ async function newDocument() {
   state.statusMenu = null;
   state.documentPopover = null;
   state.toolsPanelOpen = false;
-  state.dirty = false;
+  clearDirty();
   clearValidation();
   render();
 }
@@ -1882,14 +1973,15 @@ async function saveCurrentDocument({ silent = false } = {}) {
   await saveProposal(saved);
   state.current = saved;
   state.proposals = sortRecent(await getAllProposals());
-  state.dirty = false;
+  clearDirty();
   render();
   if (!silent) showToast(`Dokument ${saved.serial} je shranjen.`);
   return saved;
 }
 
-async function loadExistingDocument(id) {
-  if (state.dirty && !window.confirm("Trenutni dokument ima neshranjene spremembe. Odprem drug dokument?")) {
+async function loadExistingDocument(id, { skipUnsavedGuard = false } = {}) {
+  if (state.dirty && !skipUnsavedGuard) {
+    requestUnsavedChanges({ type: "load", proposalId: id });
     return;
   }
   const proposal = state.proposals.find((item) => item.id === id);
@@ -1899,7 +1991,7 @@ async function loadExistingDocument(id) {
   state.historyModalOpen = false;
   state.statusMenu = null;
   state.toolsPanelOpen = false;
-  state.dirty = false;
+  clearDirty();
   clearValidation();
   render();
 }
