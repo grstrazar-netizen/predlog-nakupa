@@ -390,28 +390,28 @@ button:disabled {
 .paper-attachment-clip {
   --paperclip-scale: 1;
   position: absolute;
-  top: -24px;
-  left: 54px;
+  top: -22px;
+  left: 50px;
   z-index: 3;
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 100px;
+  width: 40px;
+  height: 120px;
   color: #3f3f46;
-  filter: drop-shadow(0 3px 3px rgb(0 0 0 / 16%));
+  filter: drop-shadow(0 4px 4px rgb(0 0 0 / 16%));
   pointer-events: auto;
   animation: paperclip-fade-in 180ms ease-out both;
 }
 
 .paper-attachment-clip svg {
   display: block;
-  width: 32px;
-  height: 100px;
+  width: 40px;
+  height: 120px;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 2.5;
+  stroke-width: 2.7;
   vector-effect: non-scaling-stroke;
 }
 
@@ -2148,8 +2148,8 @@ textarea.doc-purpose {
 
   .paper-attachment-clip {
     --paperclip-scale: 0.88;
-    top: -14px;
-    left: -4px;
+    top: -10px;
+    left: 2px;
     transform-origin: top left;
   }
 

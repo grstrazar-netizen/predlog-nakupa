@@ -761,9 +761,9 @@ function render() {
             ${
               state.current.offerAttachmentId
                 ? `<span class="paper-attachment-clip" data-tooltip="Attachment added" aria-label="Attachment added" role="img" tabindex="0">
-                    <svg viewBox="0 0 32 100" aria-hidden="true">
-                      <path d="M25 24v52c0 12-6 20-14 20S2 89 2 79V17C2 7 8 2 15 2s13 6 13 16v57" />
-                      <path d="M9 24v53c0 7 2 11 6 11s7-4 7-12V20" />
+                    <svg viewBox="0 0 40 120" aria-hidden="true">
+                      <path d="M25 12a13 13 0 0 1 13 13v63c0 13-7 22-17 22S4 101 4 87V20C4 9 11 3 18 3s13 6 13 16v62" />
+                      <path d="M16 12a6 6 0 0 1 6 6v62c0 6 2 9 5 9s6-3 6-9V17" />
                     </svg>
                   </span>`
                 : ""
