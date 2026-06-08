@@ -369,8 +369,13 @@ button:disabled {
   min-width: 0;
 }
 
-.paper {
+.paper-frame {
+  position: relative;
   width: min(100%, var(--paper-width));
+}
+
+.paper {
+  width: 100%;
   aspect-ratio: 210 / 297;
   min-height: 0;
   padding: var(--paper-padding-y) var(--paper-padding-x);
@@ -380,6 +385,75 @@ button:disabled {
   color: #111111;
   font-family: var(--document-font-family, "Noto Sans", Arial, sans-serif);
   overflow: hidden;
+}
+
+.paper-attachment-clip {
+  --paperclip-scale: 1;
+  position: absolute;
+  top: -24px;
+  left: 54px;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 100px;
+  color: #3f3f46;
+  filter: drop-shadow(0 3px 3px rgb(0 0 0 / 16%));
+  pointer-events: auto;
+  animation: paperclip-fade-in 180ms ease-out both;
+}
+
+.paper-attachment-clip svg {
+  display: block;
+  width: 32px;
+  height: 100px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.paper-attachment-clip::after {
+  position: absolute;
+  top: 35px;
+  left: calc(100% + 8px);
+  width: max-content;
+  max-width: 170px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 14%);
+  color: #111111;
+  content: attr(data-tooltip);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.paper-attachment-clip:hover::after,
+.paper-attachment-clip:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@keyframes paperclip-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scale(var(--paperclip-scale));
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(var(--paperclip-scale));
+  }
 }
 
 .paper-header {
@@ -2072,6 +2146,13 @@ textarea.doc-purpose {
     overflow: visible;
   }
 
+  .paper-attachment-clip {
+    --paperclip-scale: 0.88;
+    top: -14px;
+    left: -4px;
+    transform-origin: top left;
+  }
+
   .document-title {
     margin-bottom: 26px;
     font-size: 15px;
@@ -2197,5 +2278,19 @@ textarea.doc-purpose {
     border: 0;
     box-shadow: none;
     overflow: hidden;
+  }
+
+  .paper-frame {
+    width: 210mm;
+  }
+
+  .paper-attachment-clip {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paper-attachment-clip {
+    animation: none;
   }
 }

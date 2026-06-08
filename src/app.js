@@ -757,7 +757,18 @@ function render() {
 
       <section class="workspace">
         <div class="document-stage">
-          <article class="paper" aria-label="Predlog nakupa drobnega materiala" style="${documentLayoutCssVariables()}">
+          <div class="paper-frame" style="${documentLayoutCssVariables()}">
+            ${
+              state.current.offerAttachmentId
+                ? `<span class="paper-attachment-clip" data-tooltip="Attachment added" aria-label="Attachment added" role="img" tabindex="0">
+                    <svg viewBox="0 0 32 100" aria-hidden="true">
+                      <path d="M25 24v52c0 12-6 20-14 20S2 89 2 79V17C2 7 8 2 15 2s13 6 13 16v57" />
+                      <path d="M9 24v53c0 7 2 11 6 11s7-4 7-12V20" />
+                    </svg>
+                  </span>`
+                : ""
+            }
+            <article class="paper" aria-label="Predlog nakupa drobnega materiala">
             <div class="paper-header">
               ${centerRogLogoMarkup()}
             </div>
@@ -854,6 +865,7 @@ function render() {
               </div>
             </footer>
           </article>
+          </div>
         </div>
 
         <aside class="side-panel${state.toolsPanelOpen ? " is-open" : ""}" id="toolsPanel" aria-label="Pregled dokumenta">
