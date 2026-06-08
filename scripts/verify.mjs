@@ -9,6 +9,7 @@ const syntaxFiles = [
   "scripts/verify.mjs",
   "src/app.js",
   "src/db.js",
+  "src/document-layout.js",
   "src/pdf.js",
   "src/utils.js"
 ];

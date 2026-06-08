@@ -19,14 +19,19 @@ import {
   yearFromDate
 } from "./utils.js";
 import {
-  deleteAttachment,
-  deleteProposal,
+  deleteOrphanAttachments,
+  deleteProposalBundle,
   getAllProposals,
   getAttachment,
-  saveAttachment,
-  saveProposal
+  saveProposal,
+  saveProposalBundle
 } from "./db.js";
 import { createCombinedPdfBlob } from "./pdf.js";
+import {
+  createCanvasTextMeasurer,
+  createProposalLayout,
+  documentLayoutCssVariables
+} from "./document-layout.js";
 
 const root = document.getElementById("app");
 
@@ -40,6 +45,7 @@ const state = {
   proposals: [],
   current: createBlankProposal(),
   attachment: null,
+  persistedAttachmentId: "",
   historyModalOpen: false,
   toolsPanelOpen: false,
   statusMenu: null,
@@ -612,17 +618,30 @@ function validationTargetSelector(fieldName) {
   return selectors[fieldName] || "";
 }
 
-function validateCurrentDocument() {
+async function validateCurrentDocument() {
   const baseValidation = validateProposalRequiredFields(state.current);
   const fields = { ...baseValidation.fields };
+  await document.fonts?.load('15px "Noto Sans"');
+  const layout = createProposalLayout(state.current, createCanvasTextMeasurer());
+  layout.overflowFields.forEach((field) => {
+    if (!fields[field]) fields[field] = "Besedilo je predolgo za eno stran A4.";
+  });
   const valid = Object.keys(fields).length === 0;
+  const firstInvalidField =
+    baseValidation.firstInvalidField ||
+    ["fullName", "jobTitle", "purpose", "explanation", "company"].find((field) => fields[field]) ||
+    "";
 
   return {
     valid,
-    message: valid ? "" : "Pred nadaljevanjem izpolnite vsa obvezna polja.",
+    message: valid
+      ? ""
+      : layout.overflowFields.length
+        ? "Dokument je predolg za eno stran A4. Skrajšajte označena polja."
+        : "Pred nadaljevanjem izpolnite vsa obvezna polja.",
     fields,
-    firstInvalidField: baseValidation.firstInvalidField,
-    firstInvalidSelector: validationTargetSelector(baseValidation.firstInvalidField)
+    firstInvalidField,
+    firstInvalidSelector: validationTargetSelector(firstInvalidField)
   };
 }
 
@@ -738,7 +757,7 @@ function render() {
 
       <section class="workspace">
         <div class="document-stage">
-          <article class="paper" aria-label="Predlog nakupa drobnega materiala">
+          <article class="paper" aria-label="Predlog nakupa drobnega materiala" style="${documentLayoutCssVariables()}">
             <div class="paper-header">
               ${centerRogLogoMarkup()}
             </div>
@@ -803,7 +822,10 @@ function render() {
               <div class="issue-signature-row">
                 <div class="issue-line">
                   <span class="fixed-place" aria-label="Kraj izdaje">${escapeHtml(DEFAULTS.city)}</span>
-                  <input class="doc-field date-field" data-field="issueDate" type="date" value="${escapeHtml(state.current.issueDate)}" aria-label="Datum izdaje" />
+                  <span class="field-stack date-field-stack">
+                    <input class="${validationControlClass("doc-field date-field", "issueDate")}" data-field="issueDate" type="date" value="${escapeHtml(state.current.issueDate)}" aria-label="Datum izdaje" ${validationControlAttrs("issueDate")} />
+                    ${renderFieldError("issueDate")}
+                  </span>
                 </div>
                 <div class="signature-box">
                   <span class="signature-label">Podpis vodje laba</span>
@@ -1671,15 +1693,13 @@ async function confirmDeleteProposal() {
     return;
   }
 
-  if (proposal.offerAttachmentId) {
-    await deleteAttachment(proposal.offerAttachmentId);
-  }
-  await deleteProposal(proposal.id);
+  await deleteProposalBundle(proposal);
 
   state.proposals = sortRecent(await getAllProposals());
   if (state.current.id === proposal.id) {
     state.current = createBlankProposal(state.proposals[0] || proposal);
     state.attachment = null;
+    state.persistedAttachmentId = "";
     clearDirty();
   }
   state.deleteConfirmId = "";
@@ -1892,6 +1912,7 @@ async function newDocument({ skipUnsavedGuard = false } = {}) {
   const recent = sortRecent(state.proposals)[0] || state.current;
   state.current = createBlankProposal(recent);
   state.attachment = null;
+  state.persistedAttachmentId = "";
   state.statusMenu = null;
   state.documentPopover = null;
   state.toolsPanelOpen = false;
@@ -1901,7 +1922,7 @@ async function newDocument({ skipUnsavedGuard = false } = {}) {
 }
 
 async function saveCurrentDocument({ silent = false } = {}) {
-  const validation = validateCurrentDocument();
+  const validation = await validateCurrentDocument();
   if (!validation.valid) {
     setValidation(validation);
     prepareValidationFocus(validation);
@@ -1913,8 +1934,18 @@ async function saveCurrentDocument({ silent = false } = {}) {
   clearValidation();
   const proposals = await getAllProposals();
   const saved = proposalWithSaveMetadata(state.current, proposals);
-  await saveProposal(saved);
+  const attachmentToSave =
+    state.attachment && state.attachment.id !== state.persistedAttachmentId ? state.attachment : null;
+  const deleteAttachmentIds =
+    state.persistedAttachmentId && state.persistedAttachmentId !== saved.offerAttachmentId
+      ? [state.persistedAttachmentId]
+      : [];
+  await saveProposalBundle(saved, {
+    attachment: attachmentToSave,
+    deleteAttachmentIds
+  });
   state.current = saved;
+  state.persistedAttachmentId = saved.offerAttachmentId || "";
   state.proposals = sortRecent(await getAllProposals());
   clearDirty();
   render();
@@ -1931,6 +1962,7 @@ async function loadExistingDocument(id, { skipUnsavedGuard = false } = {}) {
   if (!proposal) return;
   state.current = { ...proposal };
   state.attachment = await getAttachment(proposal.offerAttachmentId);
+  state.persistedAttachmentId = proposal.offerAttachmentId || "";
   state.historyModalOpen = false;
   state.statusMenu = null;
   state.toolsPanelOpen = false;
@@ -1972,10 +2004,6 @@ async function attachOfferFile(file) {
     state.current.id = generateId("proposal");
   }
 
-  if (state.current.offerAttachmentId) {
-    await deleteAttachment(state.current.offerAttachmentId);
-  }
-
   const attachment = {
     id: generateId("offer"),
     documentId: state.current.id,
@@ -1985,7 +2013,6 @@ async function attachOfferFile(file) {
     blob: file,
     createdAt: new Date().toISOString()
   };
-  await saveAttachment(attachment);
   state.current.offerAttachmentId = attachment.id;
   state.attachment = attachment;
   markDirty();
@@ -1995,7 +2022,6 @@ async function attachOfferFile(file) {
 
 async function removeAttachment() {
   if (!state.current.offerAttachmentId) return;
-  await deleteAttachment(state.current.offerAttachmentId);
   state.current.offerAttachmentId = "";
   state.attachment = null;
   markDirty();
@@ -2052,10 +2078,12 @@ async function clearLocalPreviewServiceWorker() {
 }
 
 async function init() {
+  await deleteOrphanAttachments();
   state.proposals = sortRecent(await getAllProposals());
   const last = state.proposals[0];
   state.current = last ? createBlankProposal(last) : createBlankProposal();
   state.attachment = null;
+  state.persistedAttachmentId = "";
   openOnboardingIfNeeded();
   document.addEventListener("keydown", handleKeyboardShortcut);
   document.addEventListener("pointerover", handleToolbarTooltipFirstShow);

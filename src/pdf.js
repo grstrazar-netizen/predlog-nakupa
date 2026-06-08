@@ -1,144 +1,30 @@
-import { DEFAULTS, blobToDataUrl, formatSlovenianDate, yearFromDate } from "./utils.js";
+import {
+  DOCUMENT_FONT_FILES,
+  DOCUMENT_LAYOUT,
+  createProposalLayout
+} from "./document-layout.js";
+import { DEFAULTS, formatSlovenianDate, yearFromDate } from "./utils.js";
 
-const A4 = {
-  widthPt: 595.28,
-  heightPt: 841.89,
-  widthPx: 1240,
-  heightPx: 1754
-};
+let fontBytesPromise;
+let logoPngBytesPromise;
 
-const PREVIEW_PAPER = {
-  widthPx: 794,
-  heightPx: 1123,
-  paddingX: 74,
-  paddingY: 68
-};
-
-const PREVIEW_TO_CANVAS = A4.widthPx / PREVIEW_PAPER.widthPx;
-const PDF_FONT = "Arial, Helvetica, sans-serif";
-
-function paperPx(value) {
-  return value * PREVIEW_TO_CANVAS;
+function topToPdfY(topPt, heightPt = 0) {
+  return DOCUMENT_LAYOUT.page.heightPt - topPt - heightPt;
 }
 
-function fontPx(value) {
-  return Math.round(paperPx(value));
+async function loadBinaryAsset(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Datoteke ${url} ni bilo mogoče naložiti.`);
+  return new Uint8Array(await response.arrayBuffer());
 }
 
-function drawText(ctx, text, x, y, options = {}) {
-  const { size = 28, family = PDF_FONT, weight = "400", style = "normal", align = "left", color = "#111111" } = options;
-  ctx.fillStyle = color;
-  ctx.font = `${style} ${weight} ${size}px ${family}`;
-  ctx.textAlign = align;
-  ctx.textBaseline = "top";
-  ctx.fillText(String(text || ""), x, y);
-}
-
-function drawLine(ctx, x1, y1, x2, y2, options = {}) {
-  ctx.save();
-  ctx.strokeStyle = options.color || "#111111";
-  ctx.lineWidth = options.width || 1.5;
-  if (options.dash) ctx.setLineDash(options.dash);
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawRoundedRect(ctx, x, y, width, height, options = {}) {
-  const radius = options.radius || 0;
-
-  ctx.save();
-  ctx.beginPath();
-  if (radius > 0 && typeof ctx.roundRect === "function") {
-    ctx.roundRect(x, y, width, height, radius);
-  } else {
-    ctx.rect(x, y, width, height);
+async function loadFontBytes() {
+  if (!fontBytesPromise) {
+    fontBytesPromise = Promise.all(
+      Object.entries(DOCUMENT_FONT_FILES).map(async ([name, url]) => [name, await loadBinaryAsset(url)])
+    ).then((entries) => Object.fromEntries(entries));
   }
-
-  if (options.fill) {
-    ctx.fillStyle = options.fill;
-    ctx.fill();
-  }
-
-  if (options.stroke) {
-    ctx.strokeStyle = options.stroke;
-    ctx.lineWidth = options.width || 1;
-    ctx.stroke();
-  }
-
-  ctx.restore();
-}
-
-function measureText(ctx, text, options = {}) {
-  const { size = 28, family = PDF_FONT, weight = "400", style = "normal" } = options;
-  ctx.save();
-  ctx.font = `${style} ${weight} ${size}px ${family}`;
-  const width = ctx.measureText(String(text || "")).width;
-  ctx.restore();
-  return width;
-}
-
-function wrapText(ctx, text, x, y, maxWidth, lineHeight, options = {}) {
-  let cursorY = y;
-  ctx.font = `${options.style || "normal"} ${options.weight || "400"} ${options.size || 28}px ${options.family || PDF_FONT}`;
-  ctx.fillStyle = options.color || "#111111";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-  const maxY = options.maxY || Infinity;
-
-  const paragraphs = String(text || "").split(/\n/);
-  if (!paragraphs.some((paragraph) => paragraph.trim())) {
-    ctx.fillText("", x, cursorY);
-    return cursorY + lineHeight;
-  }
-
-  for (const paragraph of paragraphs) {
-    const words = paragraph.trim().split(/\s+/).filter(Boolean);
-    let line = "";
-
-    if (!words.length) {
-      cursorY += lineHeight * 0.65;
-      continue;
-    }
-
-    for (const word of words) {
-      const testLine = line ? `${line} ${word}` : word;
-      if (ctx.measureText(testLine).width > maxWidth && line) {
-        if (cursorY + lineHeight > maxY) return cursorY;
-        ctx.fillText(line, x, cursorY);
-        line = word;
-        cursorY += lineHeight;
-      } else {
-        line = testLine;
-      }
-    }
-
-    if (line) {
-      if (cursorY + lineHeight > maxY) return cursorY;
-      ctx.fillText(line, x, cursorY);
-      cursorY += lineHeight;
-    }
-  }
-
-  return cursorY;
-}
-
-function drawCenterRogLogo(ctx, x = paperPx(PREVIEW_PAPER.paddingX), y = paperPx(PREVIEW_PAPER.paddingY)) {
-  ctx.save();
-  ctx.fillStyle = "#111111";
-  ctx.font = `700 ${fontPx(22)}px ${PDF_FONT}`;
-  ctx.textBaseline = "top";
-  ctx.fillText("Center", x, y + paperPx(5));
-  ctx.fillText("Rog", x, y + paperPx(29));
-  ctx.lineWidth = paperPx(2.5);
-  ctx.strokeStyle = "#111111";
-  ctx.beginPath();
-  ctx.moveTo(x, y + paperPx(58));
-  ctx.lineTo(x + paperPx(72), y + paperPx(58));
-  ctx.stroke();
-  ctx.restore();
+  return fontBytesPromise;
 }
 
 async function loadImage(src) {
@@ -148,6 +34,27 @@ async function loadImage(src) {
     image.onerror = () => reject(new Error(`Slike ${src} ni bilo mogoče naložiti.`));
     image.src = src;
   });
+}
+
+async function imageToPngBytes(image, width, height) {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  context.clearRect(0, 0, width, height);
+  context.drawImage(image, 0, 0, width, height);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (!blob) throw new Error("Slike ni bilo mogoče pripraviti za dokument PDF.");
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+async function loadLogoPngBytes() {
+  if (!logoPngBytesPromise) {
+    logoPngBytesPromise = loadImage("/assets/center-rog-logo.svg").then((image) =>
+      imageToPngBytes(image, 408, 380)
+    );
+  }
+  return logoPngBytesPromise;
 }
 
 function inferAttachmentKind(attachment) {
@@ -162,23 +69,17 @@ function inferAttachmentKind(attachment) {
 }
 
 async function imageBlobToPngBytes(blob) {
-  const sourceUrl = await blobToDataUrl(blob);
-  const image = await loadImage(sourceUrl);
-  const canvas = document.createElement("canvas");
-  canvas.width = image.naturalWidth || image.width;
-  canvas.height = image.naturalHeight || image.height;
-
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(image, 0, 0);
-
-  const pngBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-  if (!pngBlob) {
-    throw new Error("Priložene slike ni bilo mogoče pretvoriti v dokument PDF.");
+  const sourceUrl = URL.createObjectURL(blob);
+  try {
+    const image = await loadImage(sourceUrl);
+    return await imageToPngBytes(
+      image,
+      image.naturalWidth || image.width,
+      image.naturalHeight || image.height
+    );
+  } finally {
+    URL.revokeObjectURL(sourceUrl);
   }
-
-  return new Uint8Array(await pngBlob.arrayBuffer());
 }
 
 async function appendImageAttachmentPage(pdf, attachment) {
@@ -191,168 +92,258 @@ async function appendImageAttachmentPage(pdf, attachment) {
   } else if (mimeType === "image/png") {
     image = await pdf.embedPng(bytes);
   } else {
-    const pngBytes = await imageBlobToPngBytes(attachment.blob);
-    image = await pdf.embedPng(pngBytes);
+    image = await pdf.embedPng(await imageBlobToPngBytes(attachment.blob));
   }
 
-  const page = pdf.addPage([A4.widthPt, A4.heightPt]);
+  const { widthPt, heightPt } = DOCUMENT_LAYOUT.page;
+  const page = pdf.addPage([widthPt, heightPt]);
   const margin = 28;
-  const maxWidth = A4.widthPt - margin * 2;
-  const maxHeight = A4.heightPt - margin * 2;
-  const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1);
-  const drawWidth = image.width * scale;
-  const drawHeight = image.height * scale;
-  const x = (A4.widthPt - drawWidth) / 2;
-  const y = (A4.heightPt - drawHeight) / 2;
+  const scale = Math.min(
+    (widthPt - margin * 2) / image.width,
+    (heightPt - margin * 2) / image.height,
+    1
+  );
+  const width = image.width * scale;
+  const height = image.height * scale;
 
   page.drawImage(image, {
-    x,
-    y,
-    width: drawWidth,
-    height: drawHeight
+    x: (widthPt - width) / 2,
+    y: (heightPt - height) / 2,
+    width,
+    height
   });
 }
 
-function drawAccountingNumber(ctx, proposal, x, y, size = 27) {
-  drawText(ctx, `Št.: ${yearFromDate(proposal.issueDate)}- ____`, x, y, { size, weight: "700" });
+function fontForStyle(fonts, style = {}) {
+  if (style.weight === "bold") return fonts.bold;
+  if (style.weight === "semibold") return fonts.semibold;
+  if (style.weight === "italic") return fonts.italic;
+  return fonts.regular;
 }
 
-async function renderProposalCanvas(proposal) {
-  const canvas = document.createElement("canvas");
-  canvas.width = A4.widthPx;
-  canvas.height = A4.heightPx;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+function createPdfTextMeasurer(fonts) {
+  return (text, style = {}) =>
+    fontForStyle(fonts, style).widthOfTextAtSize(String(text || ""), style.size);
+}
 
-  const left = paperPx(PREVIEW_PAPER.paddingX);
-  const right = A4.widthPx - left;
-  const contentWidth = right - left;
-  const bodySize = fontPx(15);
-  const titleSize = fontPx(18);
-  const lineHeight = paperPx(23);
-  const muted = "#52525b";
+function drawTopText(page, text, leftPt, topPt, options) {
+  const font = fontForStyle(options.fonts, options);
+  page.drawText(String(text || ""), {
+    x: leftPt,
+    y: topToPdfY(topPt, options.size),
+    size: options.size,
+    font,
+    color: options.color
+  });
+}
 
-  try {
-    const logo = await loadImage("/assets/center-rog-logo.svg");
-    ctx.drawImage(logo, left, paperPx(PREVIEW_PAPER.paddingY), paperPx(84), paperPx(78));
-  } catch {
-    drawCenterRogLogo(ctx, left, paperPx(PREVIEW_PAPER.paddingY));
+function drawTopTextRight(page, text, rightPt, topPt, options) {
+  const font = fontForStyle(options.fonts, options);
+  const width = font.widthOfTextAtSize(String(text || ""), options.size);
+  drawTopText(page, text, rightPt - width, topPt, options);
+}
+
+function drawTopTextCentered(page, text, topPt, options) {
+  const font = fontForStyle(options.fonts, options);
+  const width = font.widthOfTextAtSize(String(text || ""), options.size);
+  drawTopText(page, text, (DOCUMENT_LAYOUT.page.widthPt - width) / 2, topPt, options);
+}
+
+function drawTextLines(page, lines, leftPt, topPt, options) {
+  lines.forEach((line, index) => {
+    drawTopText(page, line, leftPt, topPt + index * options.lineHeight, options);
+  });
+}
+
+function drawTopLine(page, leftPt, rightPt, topPt, options = {}) {
+  page.drawLine({
+    start: { x: leftPt, y: topToPdfY(topPt) },
+    end: { x: rightPt, y: topToPdfY(topPt) },
+    thickness: options.thickness || 0.75,
+    color: options.color,
+    dashArray: options.dashArray
+  });
+}
+
+async function embedDocumentFonts(pdf) {
+  if (!window.fontkit) {
+    throw new Error("Knjižnica za slovenske pisave PDF ni naložena.");
   }
 
-  let y = paperPx(151);
+  pdf.registerFontkit(window.fontkit);
+  const bytes = await loadFontBytes();
+  const [regular, semibold, bold, italic] = await Promise.all([
+    pdf.embedFont(bytes.regular, { subset: true }),
+    pdf.embedFont(bytes.semibold, { subset: true }),
+    pdf.embedFont(bytes.bold, { subset: true }),
+    pdf.embedFont(bytes.italic, { subset: true })
+  ]);
+  return { regular, semibold, bold, italic };
+}
 
-  drawText(ctx, "PREDLOG NAKUPA DROBNEGA MATERIALA", A4.widthPx / 2, y, {
-    align: "center",
-    size: titleSize,
-    weight: "700"
+async function drawProposalPage(pdf, proposal) {
+  const { rgb } = window.PDFLib;
+  const { page: pageSize, content, fonts: fontSizes, positions } = DOCUMENT_LAYOUT;
+  const page = pdf.addPage([pageSize.widthPt, pageSize.heightPt]);
+  const fonts = await embedDocumentFonts(pdf);
+  const measureText = createPdfTextMeasurer(fonts);
+  const layout = createProposalLayout(proposal, measureText);
+
+  if (!layout.fits) {
+    throw new Error("Dokument je predolg za eno stran A4. Skrajšajte označena polja.");
+  }
+
+  const black = rgb(0.067, 0.067, 0.067);
+  const muted = rgb(0.32, 0.32, 0.36);
+  const border = rgb(0.83, 0.83, 0.85);
+  const body = { fonts, size: fontSizes.bodyPt, color: black };
+  const semibold = { ...body, weight: "semibold" };
+  const bold = { ...body, weight: "bold" };
+
+  const logo = await pdf.embedPng(await loadLogoPngBytes());
+  page.drawImage(logo, {
+    x: content.leftPt,
+    y: topToPdfY(positions.logoTopPt, positions.logoHeightPt),
+    width: positions.logoWidthPt,
+    height: positions.logoHeightPt
   });
 
-  y = paperPx(215);
-  const nameLabel = "Ime in priimek:";
-  drawText(ctx, nameLabel, left, y, { size: bodySize });
-  drawText(ctx, proposal.fullName || "", left + measureText(ctx, nameLabel, { size: bodySize }) + paperPx(8), y, {
-    size: bodySize,
-    weight: "700"
+  drawTopTextCentered(page, "PREDLOG NAKUPA DROBNEGA MATERIALA", positions.titleTopPt, {
+    fonts,
+    size: fontSizes.titlePt,
+    weight: "bold",
+    color: black
   });
 
-  y += paperPx(38);
-  const jobLabel = "Zaposlen/a na delovnem mestu:";
-  drawText(ctx, jobLabel, left, y, { size: bodySize });
-  drawText(ctx, proposal.jobTitle || "", left + measureText(ctx, jobLabel, { size: bodySize }) + paperPx(8), y, {
-    size: bodySize,
-    weight: "700"
+  drawTopText(page, "Ime in priimek:", content.leftPt, positions.nameTopPt, body);
+  drawTextLines(
+    page,
+    layout.lines.fullName,
+    layout.text.nameValueLeftPt,
+    positions.nameTopPt,
+    { ...semibold, lineHeight: fontSizes.lineHeightPt }
+  );
+
+  drawTopText(page, "Zaposlen/a na delovnem mestu:", content.leftPt, positions.jobTopPt, body);
+  drawTextLines(
+    page,
+    layout.lines.jobTitle,
+    layout.text.jobValueLeftPt,
+    positions.jobTopPt,
+    { ...semibold, lineHeight: fontSizes.lineHeightPt }
+  );
+
+  drawTopText(
+    page,
+    "Predlagam nakup naslednjega drobnega materiala za potrebe:",
+    content.leftPt,
+    positions.purposeLabelTopPt,
+    body
+  );
+  drawTextLines(page, layout.lines.purpose, content.leftPt, positions.purposeTopPt, {
+    ...semibold,
+    lineHeight: fontSizes.lineHeightPt
   });
 
-  y += paperPx(62);
-  drawText(ctx, "Predlagam nakup naslednjega drobnega materiala za potrebe:", left, y, { size: bodySize });
-
-  y += paperPx(34);
-  const purposeBottom = wrapText(ctx, proposal.purpose || "", left, y, contentWidth, lineHeight, {
-    size: bodySize,
-    weight: "600",
-    maxY: y + paperPx(46)
+  drawTopText(page, "Opis / obrazložitev potrebe:", content.leftPt, positions.explanationLabelTopPt, bold);
+  page.drawRectangle({
+    x: content.leftPt,
+    y: topToPdfY(positions.explanationBoxTopPt, positions.explanationBoxHeightPt),
+    width: content.widthPt,
+    height: positions.explanationBoxHeightPt,
+    color: rgb(0.984, 0.984, 0.984),
+    borderColor: border,
+    borderWidth: 0.75
   });
-  y = Math.max(y + paperPx(30), purposeBottom) + paperPx(26);
+  drawTextLines(
+    page,
+    layout.lines.explanation,
+    layout.text.explanationTextLeftPt,
+    layout.text.explanationTextTopPt,
+    { ...body, color: muted, lineHeight: fontSizes.lineHeightPt }
+  );
 
-  drawText(ctx, "Opis / obrazložitev potrebe:", left, y, { size: bodySize, weight: "700" });
-  const notesY = y + paperPx(29);
-  const notesHeight = paperPx(142);
-  drawRoundedRect(ctx, left, notesY, contentWidth, notesHeight, {
-    radius: paperPx(8),
-    fill: "#fbfbfb",
-    stroke: "#d4d4d8",
-    width: 1
-  });
-  wrapText(ctx, proposal.explanation || "", left + paperPx(14), notesY + paperPx(12), contentWidth - paperPx(28), lineHeight, {
-    size: bodySize,
-    color: muted,
-    maxY: notesY + notesHeight - paperPx(12)
-  });
+  drawTopText(page, "Podjetje:", content.leftPt, positions.companyTopPt, body);
+  drawTextLines(
+    page,
+    layout.lines.company,
+    layout.text.companyValueLeftPt,
+    positions.companyTopPt,
+    { ...body, lineHeight: fontSizes.lineHeightPt }
+  );
 
-  y = notesY + notesHeight + paperPx(38);
-  const companyLabel = "Podjetje:";
-  drawText(ctx, companyLabel, left, y, { size: bodySize });
-  drawText(ctx, proposal.company || "", left + measureText(ctx, companyLabel, { size: bodySize }) + paperPx(8), y, {
-    size: bodySize
-  });
-
-  y += paperPx(50);
-  const value = proposal.estimatedValueCents
-    ? (proposal.estimatedValueCents / 100).toLocaleString("sl-SI", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-      })
-    : "";
   const valueLabel = "V okvirni skupni vrednosti: cca";
-  const valueX = left + measureText(ctx, valueLabel, { size: bodySize }) + paperPx(10) + paperPx(92);
-  drawText(ctx, valueLabel, left, y, { size: bodySize });
-  drawText(ctx, value, valueX, y, { size: bodySize, weight: "700", align: "right" });
-  drawText(ctx, "brez DDV", valueX + paperPx(10), y, { size: bodySize });
-
-  const footerLineY = Math.max(y + paperPx(128), paperPx(820));
-  drawLine(ctx, left, footerLineY, right, footerLineY, { color: "#d4d4d8", width: 1 });
-
-  const issueY = footerLineY + paperPx(20);
-  drawText(ctx, DEFAULTS.city, left, issueY, { size: bodySize });
-  drawText(ctx, formatSlovenianDate(proposal.issueDate), left + paperPx(168), issueY, { size: bodySize });
-  drawText(ctx, "Podpis vodje laba", left + contentWidth - paperPx(270), issueY, {
-    size: fontPx(14),
-    weight: "700"
+  const value = (proposal.estimatedValueCents / 100).toLocaleString("sl-SI", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
   });
-  drawLine(ctx, left + contentWidth - paperPx(122), issueY + paperPx(24), right, issueY + paperPx(24), { color: "#71717a" });
+  const valueLabelWidth = fonts.regular.widthOfTextAtSize(valueLabel, fontSizes.bodyPt);
+  const valueRight = content.leftPt + valueLabelWidth + 76;
+  drawTopText(page, valueLabel, content.leftPt, positions.valueTopPt, body);
+  drawTopTextRight(page, value, valueRight, positions.valueTopPt, bold);
+  drawTopText(page, "brez DDV", valueRight + 8, positions.valueTopPt, body);
 
-  drawAccountingNumber(ctx, proposal, left, issueY + paperPx(58), bodySize);
-
-  const approvalLineY = issueY + paperPx(116);
-  drawLine(ctx, left, approvalLineY, right, approvalLineY, { width: 1.7 });
-
-  const approvalY = approvalLineY + paperPx(24);
-  drawText(ctx, "SOGLAŠAM", left, approvalY + paperPx(5), { size: bodySize, weight: "700" });
-  drawRoundedRect(ctx, left + paperPx(92), approvalY, paperPx(76), paperPx(31), {
-    radius: paperPx(16),
-    fill: "#ffffff",
-    stroke: "#d4d4d8",
-    width: 1
+  const right = content.leftPt + content.widthPt;
+  drawTopLine(page, content.leftPt, right, positions.footerLineTopPt, {
+    color: border
   });
-  drawText(ctx, "DA  /  NE", left + paperPx(111), approvalY + paperPx(6), {
-    size: fontPx(14),
-    weight: "700",
-    color: "#27272a"
+  drawTopText(page, DEFAULTS.city, content.leftPt, positions.issueTopPt, body);
+  drawTopText(page, formatSlovenianDate(proposal.issueDate), content.leftPt + 126, positions.issueTopPt, body);
+  drawTopText(page, "Podpis vodje laba", right - 202, positions.issueTopPt, {
+    fonts,
+    size: fontSizes.smallPt,
+    weight: "semibold",
+    color: black
+  });
+  drawTopLine(page, right - 91, right, positions.issueTopPt + 18, {
+    color: muted
   });
 
-  const directorY = approvalY + paperPx(4);
-  const directorName = "Renata Zamida, ";
-  const roleText = "direktorica";
-  const directorNameWidth = measureText(ctx, directorName, { size: bodySize, weight: "600" });
-  const directorRoleWidth = measureText(ctx, roleText, { size: bodySize, style: "italic" });
-  const signatureWidth = paperPx(190);
-  const directorX = right - signatureWidth - paperPx(14) - directorNameWidth - directorRoleWidth;
-  drawText(ctx, directorName, directorX, directorY, { size: bodySize, weight: "600" });
-  drawText(ctx, roleText, directorX + directorNameWidth, directorY, { size: bodySize, style: "italic" });
-  drawLine(ctx, right - signatureWidth, directorY + paperPx(28), right, directorY + paperPx(28), { dash: [4, 7] });
+  drawTopText(
+    page,
+    `Št.: ${yearFromDate(proposal.issueDate)}- ____`,
+    content.leftPt,
+    positions.accountingTopPt,
+    bold
+  );
+  drawTopLine(page, content.leftPt, right, positions.approvalLineTopPt, {
+    color: black,
+    thickness: 1.1
+  });
 
-  return canvas;
+  drawTopText(page, "SOGLAŠAM", content.leftPt, positions.approvalTopPt + 4, bold);
+  page.drawRectangle({
+    x: content.leftPt + 69,
+    y: topToPdfY(positions.approvalTopPt, 23),
+    width: 57,
+    height: 23,
+    borderColor: border,
+    borderWidth: 0.75
+  });
+  drawTopText(page, "DA  /  NE", content.leftPt + 83, positions.approvalTopPt + 4, {
+    fonts,
+    size: fontSizes.smallPt,
+    weight: "bold",
+    color: black
+  });
+
+  const directorName = `${DEFAULTS.directorName}, `;
+  const directorRole = DEFAULTS.directorRole;
+  const signatureWidth = 142;
+  const nameWidth = fonts.semibold.widthOfTextAtSize(directorName, fontSizes.bodyPt);
+  const roleWidth = fonts.italic.widthOfTextAtSize(directorRole, fontSizes.bodyPt);
+  const directorLeft = right - signatureWidth - 10 - nameWidth - roleWidth;
+  drawTopText(page, directorName, directorLeft, positions.approvalTopPt + 3, semibold);
+  drawTopText(page, directorRole, directorLeft + nameWidth, positions.approvalTopPt + 3, {
+    fonts,
+    size: fontSizes.bodyPt,
+    weight: "italic",
+    color: black
+  });
+  drawTopLine(page, right - signatureWidth, right, positions.approvalTopPt + 25, {
+    color: muted,
+    dashArray: [3, 5]
+  });
 }
 
 export async function createCombinedPdfBlob(proposal, attachment) {
@@ -362,15 +353,7 @@ export async function createCombinedPdfBlob(proposal, attachment) {
 
   const { PDFDocument } = window.PDFLib;
   const pdf = await PDFDocument.create();
-  const page = pdf.addPage([A4.widthPt, A4.heightPt]);
-  const canvas = await renderProposalCanvas(proposal);
-  const proposalPng = await pdf.embedPng(canvas.toDataURL("image/png"));
-  page.drawImage(proposalPng, {
-    x: 0,
-    y: 0,
-    width: A4.widthPt,
-    height: A4.heightPt
-  });
+  await drawProposalPage(pdf, proposal);
 
   if (attachment?.blob) {
     const attachmentKind = inferAttachmentKind(attachment);
@@ -389,9 +372,4 @@ export async function createCombinedPdfBlob(proposal, attachment) {
 
   const bytes = await pdf.save();
   return new Blob([bytes], { type: "application/pdf" });
-}
-
-export async function createProposalPreviewImage(proposal) {
-  const canvas = await renderProposalCanvas(proposal);
-  return blobToDataUrl(await new Promise((resolve) => canvas.toBlob(resolve, "image/png")));
 }

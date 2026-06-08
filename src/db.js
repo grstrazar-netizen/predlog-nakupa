@@ -69,12 +69,49 @@ export async function saveProposal(proposal) {
   return proposal;
 }
 
+export async function saveProposalBundle(proposal, { attachment = null, deleteAttachmentIds = [] } = {}) {
+  if (
+    attachment &&
+    (attachment.id !== proposal.offerAttachmentId || attachment.documentId !== proposal.id)
+  ) {
+    throw new Error("Priponka ni pravilno povezana z dokumentom.");
+  }
+
+  const db = await openDatabase();
+  const tx = db.transaction([STORES.proposals, STORES.attachments], "readwrite");
+  const done = transactionDone(tx);
+  const proposalStore = tx.objectStore(STORES.proposals);
+  const attachmentStore = tx.objectStore(STORES.attachments);
+
+  proposalStore.put(proposal);
+  if (attachment) attachmentStore.put(attachment);
+
+  [...new Set(deleteAttachmentIds.filter(Boolean))]
+    .filter((id) => id !== attachment?.id)
+    .forEach((id) => attachmentStore.delete(id));
+
+  await done;
+  return proposal;
+}
+
 export async function deleteProposal(id) {
   if (!id) return;
   const db = await openDatabase();
   const tx = db.transaction(STORES.proposals, "readwrite");
   tx.objectStore(STORES.proposals).delete(id);
   await transactionDone(tx);
+}
+
+export async function deleteProposalBundle(proposal) {
+  if (!proposal?.id) return;
+  const db = await openDatabase();
+  const tx = db.transaction([STORES.proposals, STORES.attachments], "readwrite");
+  const done = transactionDone(tx);
+  tx.objectStore(STORES.proposals).delete(proposal.id);
+  if (proposal.offerAttachmentId) {
+    tx.objectStore(STORES.attachments).delete(proposal.offerAttachmentId);
+  }
+  await done;
 }
 
 export async function saveAttachment(attachment) {
@@ -97,6 +134,39 @@ export async function deleteAttachment(id) {
   const tx = db.transaction(STORES.attachments, "readwrite");
   tx.objectStore(STORES.attachments).delete(id);
   await transactionDone(tx);
+}
+
+export async function deleteOrphanAttachments() {
+  const db = await openDatabase();
+  const readTx = db.transaction([STORES.proposals, STORES.attachments], "readonly");
+  const readDone = transactionDone(readTx);
+  const [proposals, attachments] = await Promise.all([
+    requestToPromise(readTx.objectStore(STORES.proposals).getAll()),
+    requestToPromise(readTx.objectStore(STORES.attachments).getAll())
+  ]);
+  await readDone;
+
+  const attachmentIds = new Set(attachments.map((attachment) => attachment.id));
+  const referencedIds = new Set(proposals.map((proposal) => proposal.offerAttachmentId).filter(Boolean));
+  const orphanIds = attachments
+    .filter((attachment) => !referencedIds.has(attachment.id))
+    .map((attachment) => attachment.id);
+  const proposalsWithMissingAttachments = proposals.filter(
+    (proposal) => proposal.offerAttachmentId && !attachmentIds.has(proposal.offerAttachmentId)
+  );
+
+  if (!orphanIds.length && !proposalsWithMissingAttachments.length) return orphanIds;
+
+  const writeTx = db.transaction([STORES.proposals, STORES.attachments], "readwrite");
+  const writeDone = transactionDone(writeTx);
+  const proposalStore = writeTx.objectStore(STORES.proposals);
+  const attachmentStore = writeTx.objectStore(STORES.attachments);
+  orphanIds.forEach((id) => attachmentStore.delete(id));
+  proposalsWithMissingAttachments.forEach((proposal) => {
+    proposalStore.put({ ...proposal, offerAttachmentId: "" });
+  });
+  await writeDone;
+  return orphanIds;
 }
 
 export async function getAsset(id) {
