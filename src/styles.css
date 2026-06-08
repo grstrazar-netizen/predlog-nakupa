@@ -144,19 +144,36 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
   flex: 0 0 auto;
   flex-wrap: nowrap;
 }
 
-.button-group {
+.command-bar {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: 0;
+  gap: 4px;
+  min-height: 42px;
+  padding: 3px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--card);
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+}
+
+.command-section {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.command-divider {
+  display: block;
+  flex: 0 0 1px;
+  width: 1px;
+  height: 22px;
+  margin: 0 2px;
+  background: var(--border);
 }
 
 .button {
@@ -182,29 +199,42 @@ button:disabled {
 
 .toolbar-button {
   position: relative;
-  flex: 0 0 38px;
-  width: 38px;
-  min-width: 38px;
+  flex: 0 0 36px;
+  width: 36px;
+  min-width: 36px;
+  min-height: 34px;
   border: 0;
-  border-radius: 0;
+  border-radius: 6px;
   padding: 0;
   gap: 0;
+  color: #3f3f46;
+  background: transparent;
 }
 
-.button-group .toolbar-button:first-child {
-  border-radius: 7px 0 0 7px;
+.toolbar-button:hover {
+  background: #f4f4f5;
+  color: #09090b;
 }
 
-.button-group .toolbar-button:last-child {
-  border-radius: 0 7px 7px 0;
+.toolbar-button:focus-visible {
+  outline: 2px solid #18181b;
+  outline-offset: 1px;
 }
 
-.button-group .toolbar-button:only-child {
-  border-radius: 7px;
+.toolbar-button-primary {
+  background: #18181b;
+  color: #ffffff;
 }
 
-.button-group .toolbar-button + .toolbar-button {
-  box-shadow: inset 1px 0 0 var(--border);
+.toolbar-button-primary:hover {
+  background: #27272a;
+  color: #ffffff;
+}
+
+.toolbar-button svg {
+  width: 17px;
+  height: 17px;
+  stroke-width: 1.9;
 }
 
 .toolbar-button::after {
