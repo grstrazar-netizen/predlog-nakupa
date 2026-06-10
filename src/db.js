@@ -1,7 +1,8 @@
 const DB_NAME = "predlog-nakupa-db";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORES = {
   proposals: "proposals",
+  materialIssues: "materialIssues",
   attachments: "attachments",
   assets: "assets"
 };
@@ -39,6 +40,13 @@ export function openDatabase() {
         store.createIndex("updatedAt", "updatedAt", { unique: false });
       }
 
+      if (!db.objectStoreNames.contains(STORES.materialIssues)) {
+        const store = db.createObjectStore(STORES.materialIssues, { keyPath: "id" });
+        store.createIndex("serial", "serial", { unique: true });
+        store.createIndex("year", "year", { unique: false });
+        store.createIndex("updatedAt", "updatedAt", { unique: false });
+      }
+
       if (!db.objectStoreNames.contains(STORES.attachments)) {
         const store = db.createObjectStore(STORES.attachments, { keyPath: "id" });
         store.createIndex("documentId", "documentId", { unique: false });
@@ -67,6 +75,29 @@ export async function saveProposal(proposal) {
   tx.objectStore(STORES.proposals).put(proposal);
   await transactionDone(tx);
   return proposal;
+}
+
+export async function getAllMaterialIssues() {
+  const db = await openDatabase();
+  return requestToPromise(
+    db.transaction(STORES.materialIssues).objectStore(STORES.materialIssues).getAll()
+  );
+}
+
+export async function saveMaterialIssue(issue) {
+  const db = await openDatabase();
+  const tx = db.transaction(STORES.materialIssues, "readwrite");
+  tx.objectStore(STORES.materialIssues).put(issue);
+  await transactionDone(tx);
+  return issue;
+}
+
+export async function deleteMaterialIssue(id) {
+  if (!id) return;
+  const db = await openDatabase();
+  const tx = db.transaction(STORES.materialIssues, "readwrite");
+  tx.objectStore(STORES.materialIssues).delete(id);
+  await transactionDone(tx);
 }
 
 export async function saveProposalBundle(proposal, { attachment = null, deleteAttachmentIds = [] } = {}) {
@@ -180,4 +211,12 @@ export async function saveAsset(asset) {
   tx.objectStore(STORES.assets).put(asset);
   await transactionDone(tx);
   return asset;
+}
+
+export async function deleteAsset(id) {
+  if (!id) return;
+  const db = await openDatabase();
+  const tx = db.transaction(STORES.assets, "readwrite");
+  tx.objectStore(STORES.assets).delete(id);
+  await transactionDone(tx);
 }

@@ -1,7 +1,7 @@
 {
-  "name": "Predlog nakupa drobnega materiala",
-  "short_name": "Predlog nakupa",
-  "description": "Lokalna progresivna spletna aplikacija za izdajo dokumentov Predlog nakupa drobnega materiala.",
+  "name": "Dokumenti materiala",
+  "short_name": "Material",
+  "description": "Lokalna progresivna spletna aplikacija za predloge nakupa in izdajnice materiala.",
   "id": "/",
   "lang": "sl",
   "scope": "/",

@@ -10,6 +10,8 @@ const syntaxFiles = [
   "src/app.js",
   "src/db.js",
   "src/document-layout.js",
+  "src/material-issue.js",
+  "src/material-issue-pdf.js",
   "src/pdf.js",
   "src/utils.js"
 ];

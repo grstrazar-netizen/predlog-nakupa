@@ -355,8 +355,29 @@ export function createBlankProposal(lastProposal) {
     directorName: DEFAULTS.directorName,
     directorRole: DEFAULTS.directorRole,
     offerAttachmentId: "",
+    signaturePlacement: {
+      inserted: false,
+      x: 5,
+      y: 4,
+      width: 90
+    },
     createdAt: "",
     updatedAt: ""
+  };
+}
+
+export function normalizeSignaturePlacement(placement) {
+  const source = placement || {};
+  const width = Math.min(100, Math.max(25, Number(source.width) || 90));
+  const rawX = Number(source.x);
+  const rawY = Number(source.y);
+  const x = Math.min(100 - width, Math.max(0, Number.isFinite(rawX) ? rawX : 5));
+  const y = Math.min(70, Math.max(0, Number.isFinite(rawY) ? rawY : 4));
+  return {
+    inserted: Boolean(source.inserted),
+    x,
+    y,
+    width
   };
 }
 
@@ -408,6 +429,7 @@ export function proposalWithSaveMetadata(proposal, proposals) {
     city: DEFAULTS.city,
     directorName: DEFAULTS.directorName,
     directorRole: DEFAULTS.directorRole,
+    signaturePlacement: normalizeSignaturePlacement(proposal.signaturePlacement),
     createdAt: proposal.createdAt || now,
     updatedAt: now
   };

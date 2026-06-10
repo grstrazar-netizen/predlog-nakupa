@@ -7,6 +7,7 @@ import {
   extractEuroTotalCents,
   formatCurrency,
   generateId,
+  normalizeSignaturePlacement,
   normalizeLabCode,
   parseMoneyToCents,
   proposalWithSaveMetadata,
@@ -20,13 +21,31 @@ import {
 } from "./utils.js";
 import {
   deleteOrphanAttachments,
+  deleteAsset,
+  getAllMaterialIssues,
+  getAsset,
   deleteProposalBundle,
   getAllProposals,
   getAttachment,
+  saveAsset,
+  saveMaterialIssue as persistMaterialIssue,
   saveProposal,
   saveProposalBundle
 } from "./db.js";
-import { createCombinedPdfBlob } from "./pdf.js";
+import { createCombinedPdfBlob, createProposalPdfBlob } from "./pdf.js";
+import { createMaterialIssuePdfBlob } from "./material-issue-pdf.js";
+import {
+  MATERIAL_ISSUE_STATUSES,
+  MATERIAL_UNITS,
+  createBlankMaterialIssue,
+  createBlankMaterialRow,
+  materialIssueTotalCents,
+  materialIssueWithSaveMetadata,
+  materialRowAmountCents,
+  nextMaterialIssueSerial,
+  normalizeMaterialTariff,
+  validateMaterialIssue
+} from "./material-issue.js";
 import {
   createCanvasTextMeasurer,
   createProposalLayout,
@@ -34,6 +53,8 @@ import {
 } from "./document-layout.js";
 
 const root = document.getElementById("app");
+const SIGNATURE_ASSET_ID = "lab-manager-signature";
+const MAX_SIGNATURE_FILE_SIZE = 2 * 1024 * 1024;
 
 const KEYBOARD_SHORTCUTS = {
   n: "new",
@@ -42,10 +63,15 @@ const KEYBOARD_SHORTCUTS = {
 };
 
 const state = {
+  documentType: "proposal",
   proposals: [],
   current: createBlankProposal(),
+  materialIssues: [],
+  currentMaterialIssue: createBlankMaterialIssue(),
   attachment: null,
   persistedAttachmentId: "",
+  signatureAsset: null,
+  signatureUrl: "",
   historyModalOpen: false,
   toolsPanelOpen: false,
   statusMenu: null,
@@ -62,6 +88,11 @@ const state = {
   dirty: false,
   busy: false,
   validation: {
+    message: "",
+    fields: {},
+    firstInvalidField: ""
+  },
+  materialValidation: {
     message: "",
     fields: {},
     firstInvalidField: ""
@@ -151,6 +182,101 @@ function escapeHtml(value) {
 
 function icon(name) {
   return `<i data-lucide="${name}" aria-hidden="true"></i>`;
+}
+
+function setSignatureAsset(asset) {
+  if (state.signatureUrl) URL.revokeObjectURL(state.signatureUrl);
+  state.signatureAsset = asset || null;
+  state.signatureUrl = asset?.blob ? URL.createObjectURL(asset.blob) : "";
+}
+
+function currentSignatureDocument() {
+  return state.documentType === "materialIssue" ? state.currentMaterialIssue : state.current;
+}
+
+function currentSignaturePlacement() {
+  return normalizeSignaturePlacement(currentSignatureDocument().signaturePlacement);
+}
+
+function updateCurrentSignaturePlacement(nextPlacement, { rerender = true } = {}) {
+  currentSignatureDocument().signaturePlacement = normalizeSignaturePlacement(nextPlacement);
+  markDirty();
+  if (rerender) render();
+}
+
+function renderSignatureZone(context = "proposal") {
+  const hasSignature = Boolean(state.signatureAsset?.blob && state.signatureUrl);
+  const placement = currentSignaturePlacement();
+  const isInserted = hasSignature && placement.inserted;
+
+  return `
+    <span class="signature-zone signature-zone-${escapeHtml(context)}${isInserted ? " has-inserted-signature" : ""}" data-signature-zone>
+      <span class="signature-zone-rule" aria-hidden="true"></span>
+      ${
+        isInserted
+          ? `<span
+              class="signature-object"
+              data-signature-object
+              style="left:${placement.x}%;top:${placement.y}%;width:${placement.width}%"
+              tabindex="0"
+              aria-label="Vstavljen podpis. Povleci ga za premik ali uporabi ročico za spremembo velikosti."
+            >
+              <img src="${escapeHtml(state.signatureUrl)}" alt="Podpis vodje laba" draggable="false" />
+              <span class="signature-resize-handle" data-signature-resize aria-hidden="true"></span>
+            </span>`
+          : hasSignature
+            ? `<button class="signature-quick-insert" type="button" data-action="insert-signature" aria-label="Vstavi shranjeni podpis" title="Vstavi shranjeni podpis">${icon("pen-tool")}</button>`
+            : ""
+      }
+    </span>
+  `;
+}
+
+function renderSignaturePanel() {
+  const hasSignature = Boolean(state.signatureAsset?.blob && state.signatureUrl);
+  const placement = currentSignaturePlacement();
+  return `
+    <section class="panel signature-panel">
+      <div class="panel-header">
+        <span class="panel-icon">${icon("signature")}</span>
+        <span class="panel-title">Moj podpis</span>
+      </div>
+      <div class="panel-body">
+        ${
+          hasSignature
+            ? `<div class="signature-library-preview">
+                <img src="${escapeHtml(state.signatureUrl)}" alt="Shranjeni podpis" />
+              </div>
+              <div class="signature-panel-actions">
+                <button class="button button-outline" type="button" data-action="${placement.inserted ? "remove-inserted-signature" : "insert-signature"}">
+                  ${icon(placement.inserted ? "undo-2" : "pen-tool")}
+                  ${placement.inserted ? "Odstrani iz dokumenta" : "Vstavi v dokument"}
+                </button>
+                <button class="button button-icon-only button-ghost" type="button" data-action="upload-signature" aria-label="Zamenjaj podpis" title="Zamenjaj podpis">
+                  ${icon("image-up")}
+                </button>
+                <button class="button button-icon-only button-ghost" type="button" data-action="remove-signature" aria-label="Izbriši shranjeni podpis" title="Izbriši shranjeni podpis">
+                  ${icon("trash-2")}
+                </button>
+              </div>
+              ${
+                placement.inserted
+                  ? `<label class="signature-size-control">
+                      <span>Velikost podpisa</span>
+                      <input type="range" min="25" max="${100 - placement.x}" step="1" value="${placement.width}" data-signature-size />
+                    </label>
+                    <p class="signature-helper">Na dokumentu ga lahko povlečeš ali spremeniš velikost z ročico v kotu.</p>`
+                  : `<p class="signature-helper">Podpis je pripravljen. Vstavi ga samo v dokumente, ki jih želiš elektronsko podpisati.</p>`
+              }`
+            : `<p class="empty-text">Enkrat naloži fotografijo podpisa PNG ali JPG. Nato ga lahko vstaviš v izbrane dokumente.</p>
+              <button class="button button-outline" type="button" data-action="upload-signature">
+                ${icon("image-up")} Naloži podpis
+              </button>`
+        }
+        <p class="signature-storage-note">${icon("hard-drive")} Podpis je shranjen samo v tem brskalniku in na tem računalniku.</p>
+      </div>
+    </section>
+  `;
 }
 
 function documentStatusOption(value) {
@@ -517,6 +643,65 @@ function documentSaveState() {
   };
 }
 
+function materialIssueSerialPreview() {
+  const issue = state.currentMaterialIssue;
+  if (issue.serial) return issue.serial;
+  return `IZD-${normalizeLabCode(issue.labCode)}-${yearFromDate(issue.issueDate)}-___`;
+}
+
+function materialIssueSaveState() {
+  const issue = state.currentMaterialIssue;
+  if (!issue.serial) {
+    return {
+      kind: "unsaved",
+      label: "Osnutek ni shranjen",
+      detail: `Predvidena številka: ${materialIssueSerialPreview()}`,
+      saveLabel: "Shrani osnutek"
+    };
+  }
+
+  if (state.dirty) {
+    return {
+      kind: "dirty",
+      label: "Neshranjene spremembe",
+      detail: `Izdajnica: ${issue.serial}`,
+      saveLabel: "Shrani spremembe"
+    };
+  }
+
+  return {
+    kind: "saved",
+    label: issue.status === "draft" ? "Osnutek shranjen" : "Shranjeno",
+    detail: `Izdajnica: ${issue.serial}`,
+    saveLabel: "Shrani"
+  };
+}
+
+function materialValidationError(fieldName) {
+  return state.materialValidation.fields?.[fieldName] || "";
+}
+
+function materialValidationAttrs(fieldName) {
+  const message = materialValidationError(fieldName);
+  if (!message) return "";
+  return `aria-invalid="true" aria-describedby="material-error-${escapeHtml(fieldName)}"`;
+}
+
+function materialValidationClass(baseClass, fieldName) {
+  return `${baseClass}${materialValidationError(fieldName) ? " is-invalid" : ""}`;
+}
+
+function renderMaterialError(fieldName) {
+  const message = materialValidationError(fieldName);
+  return message
+    ? `<span class="field-error material-field-error" id="material-error-${escapeHtml(fieldName)}">${escapeHtml(message)}</span>`
+    : "";
+}
+
+function materialStatusLabel(value) {
+  return MATERIAL_ISSUE_STATUSES.find((status) => status.value === value)?.label || "Osnutek";
+}
+
 function centerRogLogoMarkup() {
   return `
     <img class="center-rog-logo" src="/assets/center-rog-logo.svg" alt="Center Rog" />
@@ -525,6 +710,7 @@ function centerRogLogoMarkup() {
 
 function markDirty() {
   setDirtyState(true);
+  syncSaveStateIndicator();
 }
 
 function clearDirty() {
@@ -534,6 +720,19 @@ function clearDirty() {
 function setDirtyState(isDirty) {
   state.dirty = isDirty;
   updateBeforeUnloadProtection();
+}
+
+function syncSaveStateIndicator() {
+  const saveState =
+    state.documentType === "materialIssue" ? materialIssueSaveState() : documentSaveState();
+  const pill = document.querySelector(".save-state-pill");
+  if (pill) {
+    pill.className = `save-state-pill save-state-${saveState.kind}`;
+    pill.textContent = saveState.label;
+  }
+
+  const detail = document.querySelector(".brand-subtitle > span:last-child");
+  if (detail) detail.textContent = saveState.detail;
 }
 
 function updateBeforeUnloadProtection() {
@@ -697,7 +896,382 @@ function renderToast() {
   document.body.append(toast);
 }
 
+function renderEvidenceSwitcher(activeType, disabledAttr = "") {
+  const proposalActive = activeType === "proposal";
+  const proposalControl = proposalActive
+    ? `<span class="evidence-switcher-option is-active" aria-current="page">
+        ${icon("file-text")}
+        <span>Predlogi nakupa</span>
+      </span>`
+    : `<button class="evidence-switcher-option" type="button" data-action="switch-document" data-tooltip="Odpri ločeno evidenco predlogov za nakup." aria-label="Odpri evidenco predlogov za nakup" data-busy-sensitive ${disabledAttr}>
+        ${icon("file-text")}
+        <span>Predlogi nakupa</span>
+      </button>`;
+  const issueControl = activeType === "materialIssue"
+    ? `<span class="evidence-switcher-option is-active" aria-current="page">
+        ${icon("clipboard-list")}
+        <span>Izdajnice materiala</span>
+      </span>`
+    : `<button class="evidence-switcher-option" type="button" data-action="switch-document" data-tooltip="Odpri ločeno evidenco izdajnic materiala." aria-label="Odpri evidenco izdajnic materiala" data-busy-sensitive ${disabledAttr}>
+        ${icon("clipboard-list")}
+        <span>Izdajnice materiala</span>
+      </button>`;
+
+  return `
+    <nav class="evidence-switcher" aria-label="Preklop med evidencama">
+      <span class="evidence-switcher-caption">Preklop evidence</span>
+      <div class="evidence-switcher-options">
+        ${proposalControl}
+        ${issueControl}
+      </div>
+    </nav>
+  `;
+}
+
+function renderMaterialIssue() {
+  const issue = state.currentMaterialIssue;
+  const saveState = materialIssueSaveState();
+  const disabledAttr = state.busy ? "disabled" : "";
+  const recentIssues = sortRecent(state.materialIssues).slice(0, 5);
+  const totalCents = materialIssueTotalCents(issue);
+  const validation = state.materialValidation;
+
+  root.innerHTML = `
+    <main class="app-shell material-issue-shell">
+      <header class="toolbar">
+        <div class="brand">
+          <div class="brand-mark">${icon("clipboard-list")}</div>
+          <div class="brand-copy">
+            <div class="brand-title">Izdajnica materiala</div>
+            <div class="brand-subtitle">
+              <span class="save-state-pill save-state-${escapeHtml(saveState.kind)}">${escapeHtml(saveState.label)}</span>
+              <span>${escapeHtml(saveState.detail)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="toolbar-controls">
+          <nav class="toolbar-actions command-bar" aria-label="Ukazi izdajnice">
+            <div class="command-section" role="group" aria-label="Dokument">
+              <button class="button toolbar-button" type="button" data-action="new" data-tooltip="Nova izdajnica. Bližnjica: Ctrl/Cmd+N." aria-label="Nova izdajnica" data-busy-sensitive ${disabledAttr}>
+                ${icon("file-plus-2")}
+              </button>
+              <button class="button toolbar-button" type="button" data-action="save" data-tooltip="${escapeHtml(saveState.saveLabel)}. Nepopolno izdajnico lahko shraniš kot osnutek. Bližnjica: Ctrl/Cmd+S." aria-label="${escapeHtml(saveState.saveLabel)}" data-busy-sensitive ${disabledAttr}>
+                ${icon("save")}
+              </button>
+            </div>
+            <span class="command-divider" aria-hidden="true"></span>
+            <div class="command-section" role="group" aria-label="Izvoz">
+              <button class="button toolbar-button toolbar-button-primary" type="button" data-action="download" data-tooltip="Prenesi izdajnico v formatu PDF. Pred izvozom morajo biti izpolnjena vsa obvezna polja." aria-label="Prenesi PDF" data-busy-sensitive ${disabledAttr}>
+                ${icon("download")}
+              </button>
+              <button class="button toolbar-button" type="button" data-action="print" data-tooltip="Natisni izdajnico A4. Status se spremeni v Natisnjeno. Bližnjica: Ctrl/Cmd+P." aria-label="Natisni izdajnico" data-busy-sensitive ${disabledAttr}>
+                ${icon("printer")}
+              </button>
+            </div>
+          </nav>
+          ${renderEvidenceSwitcher("materialIssue", disabledAttr)}
+        </div>
+      </header>
+
+      <section class="workspace material-issue-workspace">
+        <div class="document-stage">
+          <div class="material-issue-paper-frame">
+            <article class="paper material-issue-paper" aria-label="Izdajnica materiala">
+              <header class="material-issue-header">
+                ${centerRogLogoMarkup()}
+                <div class="material-issue-heading">
+                  <span class="material-issue-kicker">CENTER ROG</span>
+                  <h1>IZDAJNICA MATERIALA</h1>
+                  <span class="material-issue-number">${escapeHtml(issue.serial || "OSNUTEK")}</span>
+                </div>
+              </header>
+
+              ${
+                validation.message
+                  ? `<div class="form-error-banner material-error-banner" role="alert">${escapeHtml(validation.message)}</div>`
+                  : ""
+              }
+
+              <section class="material-issue-meta" aria-label="Podatki izdajnice">
+                <label class="material-meta-field">
+                  <span>Izdaja</span>
+                  <input class="${materialValidationClass("material-input", "issuerName")}" data-material-field="issuerName" value="${escapeHtml(issue.issuerName)}" autocomplete="name" ${materialValidationAttrs("issuerName")} />
+                  ${renderMaterialError("issuerName")}
+                </label>
+                <label class="material-meta-field">
+                  <span>Delovno mesto</span>
+                  <input class="${materialValidationClass("material-input", "issuerRole")}" data-material-field="issuerRole" value="${escapeHtml(issue.issuerRole)}" ${materialValidationAttrs("issuerRole")} />
+                  ${renderMaterialError("issuerRole")}
+                </label>
+                <label class="material-meta-field">
+                  <span>Laboratorij</span>
+                  <input class="${materialValidationClass("material-input", "labName")}" data-material-field="labName" value="${escapeHtml(issue.labName)}" ${materialValidationAttrs("labName")} />
+                  ${renderMaterialError("labName")}
+                </label>
+                <label class="material-meta-field">
+                  <span>Uporabnik / kupec</span>
+                  <input class="${materialValidationClass("material-input", "buyerName")}" data-material-field="buyerName" value="${escapeHtml(issue.buyerName)}" autocomplete="name" ${materialValidationAttrs("buyerName")} />
+                  ${renderMaterialError("buyerName")}
+                </label>
+                <label class="material-meta-field material-meta-date">
+                  <span>Datum</span>
+                  <input class="${materialValidationClass("material-input", "issueDate")}" type="date" data-material-field="issueDate" value="${escapeHtml(issue.issueDate)}" ${materialValidationAttrs("issueDate")} />
+                  ${renderMaterialError("issueDate")}
+                </label>
+                <label class="material-meta-field material-meta-time">
+                  <span>Ura</span>
+                  <input class="${materialValidationClass("material-input", "issueTime")}" type="time" data-material-field="issueTime" value="${escapeHtml(issue.issueTime)}" ${materialValidationAttrs("issueTime")} />
+                  ${renderMaterialError("issueTime")}
+                </label>
+                <label class="material-meta-field">
+                  <span>Kraj izdaje</span>
+                  <input class="${materialValidationClass("material-input", "city")}" data-material-field="city" value="${escapeHtml(issue.city)}" ${materialValidationAttrs("city")} />
+                  ${renderMaterialError("city")}
+                </label>
+              </section>
+
+              <section class="material-table-section">
+                <div class="material-table-wrap">
+                  <table class="material-table">
+                    <colgroup>
+                      <col class="material-col-index" />
+                      <col class="material-col-name" />
+                      <col class="material-col-unit" />
+                      <col class="material-col-quantity" />
+                      <col class="material-col-tariff" />
+                      <col class="material-col-amount" />
+                      <col class="material-col-action" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th>Št.</th>
+                        <th>Naziv materiala</th>
+                        <th>EM</th>
+                        <th>Količina</th>
+                        <th>Tarifa</th>
+                        <th>Znesek</th>
+                        <th><span class="sr-only">Dejanje</span></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${issue.items
+                        .map((row, index) => {
+                          const prefix = `items.${row.id}`;
+                          return `
+                            <tr data-material-row="${escapeHtml(row.id)}">
+                              <td class="material-row-index">${index + 1}</td>
+                              <td>
+                                <input
+                                  class="${materialValidationClass("material-cell-input", `${prefix}.name`)}"
+                                  data-material-item-field="name"
+                                  data-material-item-id="${escapeHtml(row.id)}"
+                                  value="${escapeHtml(row.name)}"
+                                  aria-label="Naziv materiala v vrstici ${index + 1}"
+                                  ${materialValidationAttrs(`${prefix}.name`)}
+                                />
+                                ${renderMaterialError(`${prefix}.name`)}
+                              </td>
+                              <td>
+                                <select
+                                  class="${materialValidationClass("material-cell-input material-unit-select", `${prefix}.unit`)}"
+                                  data-material-item-field="unit"
+                                  data-material-item-id="${escapeHtml(row.id)}"
+                                  aria-label="Merska enota v vrstici ${index + 1}"
+                                  ${materialValidationAttrs(`${prefix}.unit`)}
+                                >
+                                  ${MATERIAL_UNITS.map((unit) => `<option value="${escapeHtml(unit)}" ${row.unit === unit ? "selected" : ""}>${escapeHtml(unit)}</option>`).join("")}
+                                </select>
+                                ${renderMaterialError(`${prefix}.unit`)}
+                              </td>
+                              <td>
+                                <input
+                                  class="${materialValidationClass("material-cell-input material-number-input", `${prefix}.quantity`)}"
+                                  data-material-item-field="quantity"
+                                  data-material-item-id="${escapeHtml(row.id)}"
+                                  value="${escapeHtml(row.quantity)}"
+                                  inputmode="decimal"
+                                  aria-label="Količina v vrstici ${index + 1}"
+                                  ${materialValidationAttrs(`${prefix}.quantity`)}
+                                />
+                                ${renderMaterialError(`${prefix}.quantity`)}
+                              </td>
+                              <td>
+                                <input
+                                  class="${materialValidationClass("material-cell-input material-number-input", `${prefix}.tariffCents`)}"
+                                  data-material-item-field="tariffCents"
+                                  data-material-item-id="${escapeHtml(row.id)}"
+                                  value="${escapeHtml(centsToInputValue(row.tariffCents))}"
+                                  inputmode="decimal"
+                                  aria-label="Tarifa v vrstici ${index + 1}"
+                                  ${materialValidationAttrs(`${prefix}.tariffCents`)}
+                                />
+                                ${renderMaterialError(`${prefix}.tariffCents`)}
+                              </td>
+                              <td class="material-row-amount" data-material-row-amount="${escapeHtml(row.id)}">${formatCurrency(materialRowAmountCents(row))}</td>
+                              <td>
+                                <button class="material-row-remove" type="button" data-remove-material-row="${escapeHtml(row.id)}" aria-label="Odstrani vrstico ${index + 1}" ${issue.items.length === 1 ? "disabled" : ""}>
+                                  ${icon("trash-2")}
+                                </button>
+                              </td>
+                            </tr>
+                          `;
+                        })
+                        .join("")}
+                      ${Array.from(
+                        { length: Math.max(0, 8 - issue.items.length) },
+                        (_, index) => `
+                          <tr class="material-placeholder-row" aria-hidden="true">
+                            <td>${issue.items.length + index + 1}</td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                          </tr>
+                        `
+                      ).join("")}
+                    </tbody>
+                  </table>
+                </div>
+                <div class="material-table-actions">
+                  <button class="button button-outline material-add-row" type="button" data-action="add-material-row" ${issue.items.length >= 8 ? "disabled" : ""}>
+                    ${icon("plus")} Dodaj vrstico
+                  </button>
+                  <div class="material-total">
+                    <span>Skupaj za plačilo</span>
+                    <strong data-material-total>${formatCurrency(totalCents)}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section class="material-issue-footer">
+                <label class="material-note-field">
+                  <span>Opomba</span>
+                  <textarea class="material-note-input" data-material-field="note" rows="3" placeholder="Dodatna navodila ali opomba za blagajno in prevzem.">${escapeHtml(issue.note)}</textarea>
+                </label>
+                <div class="material-signature">
+                  <span>Podpis osebe, ki izdaja dokument</span>
+                  ${renderSignatureZone("material")}
+                </div>
+              </section>
+
+              <p class="material-payment-note">
+                Material se izroči po plačilu na blagajni in predložitvi računa.
+              </p>
+            </article>
+          </div>
+        </div>
+
+        <aside class="side-panel${state.toolsPanelOpen ? " is-open" : ""}" id="toolsPanel" aria-label="Pregled izdajnice">
+          <div class="panel-drawer-header">
+            <span>${icon("panel-right")} Pregled izdajnice</span>
+            <button class="button button-icon-only button-ghost" type="button" data-action="close-tools" aria-label="Zapri pregled izdajnice">
+              ${icon("x")}
+            </button>
+          </div>
+
+          <section class="panel">
+            <div class="panel-header">
+              <span class="panel-icon">${icon("route")}</span>
+              <span class="panel-title">Pot dokumenta</span>
+            </div>
+            <div class="panel-body">
+              <label class="field-stack">
+                <span>Status izdajnice</span>
+                <select class="input material-status-select" data-material-status>
+                  ${MATERIAL_ISSUE_STATUSES.map((status) => `<option value="${status.value}" ${issue.status === status.value ? "selected" : ""}>${status.label}</option>`).join("")}
+                </select>
+              </label>
+              <ol class="material-workflow">
+                <li class="${["printed", "paid", "collected"].includes(issue.status) ? "is-complete" : ""}">Natisni izdajnico</li>
+                <li class="${["paid", "collected"].includes(issue.status) ? "is-complete" : ""}">Plačilo na blagajni</li>
+                <li class="${issue.status === "collected" ? "is-complete" : ""}">Prevzem materiala z računom</li>
+              </ol>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <span class="panel-icon">${icon("history")}</span>
+              <span class="panel-title">Zadnje izdajnice</span>
+            </div>
+            <div class="panel-body">
+              ${
+                recentIssues.length
+                  ? recentIssues
+                      .map(
+                        (savedIssue) => `
+                          <button class="material-history-row status-${escapeHtml(savedIssue.status || "draft")}" type="button" data-load-material-issue-id="${escapeHtml(savedIssue.id)}">
+                            <span>
+                              <strong>${escapeHtml(savedIssue.serial || "Osnutek")}</strong>
+                              <small>${escapeHtml(savedIssue.buyerName || "Brez uporabnika")} · ${formatCurrency(materialIssueTotalCents(savedIssue))}</small>
+                            </span>
+                            ${icon("chevron-right")}
+                          </button>
+                        `
+                      )
+                      .join("")
+                  : `<p class="empty-text">Shranjene izdajnice se bodo pokazale tukaj.</p>`
+              }
+            </div>
+          </section>
+
+          ${renderSignaturePanel()}
+
+          <section class="panel">
+            <div class="panel-header">
+              <span class="panel-icon">${icon("pencil")}</span>
+              <span class="panel-title">Podatki dokumenta</span>
+            </div>
+            <div class="panel-body">
+              <div class="settings-summary">
+                <div class="settings-summary-row">
+                  <span>Številka</span>
+                  <strong>${escapeHtml(issue.serial || materialIssueSerialPreview())}</strong>
+                </div>
+                <div class="settings-summary-row">
+                  <span>Skupni znesek</span>
+                  <strong>${formatCurrency(totalCents)}</strong>
+                </div>
+                <div class="settings-summary-row">
+                  <span>Status</span>
+                  <strong>${escapeHtml(materialStatusLabel(issue.status))}</strong>
+                </div>
+                <div class="settings-summary-row settings-summary-editable">
+                  <label for="materialLabCode">Kratica laba</label>
+                  <span class="settings-code-field-wrap">
+                    <input class="${materialValidationClass("settings-code-input", "labCode")}" id="materialLabCode" data-material-field="labCode" value="${escapeHtml(issue.labCode)}" aria-label="Kratica laba za številčenje izdajnice" ${materialValidationAttrs("labCode")} />
+                    ${renderMaterialError("labCode")}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </section>
+        </aside>
+      </section>
+
+      <div class="tools-panel-backdrop${state.toolsPanelOpen ? " is-open" : ""}" data-action="close-tools" aria-hidden="true"></div>
+      <button class="mobile-panel-toggle" type="button" data-action="toggle-tools" aria-controls="toolsPanel" aria-expanded="${state.toolsPanelOpen ? "true" : "false"}">
+        ${icon("panel-right")} Pregled
+      </button>
+      <input class="hidden-input" type="file" id="signatureInput" accept="image/png,image/jpeg,.png,.jpg,.jpeg" />
+      ${renderUnsavedPrompt()}
+    </main>
+  `;
+
+  bindMaterialIssueEvents();
+  refreshIcons();
+  renderToast();
+}
+
 function render() {
+  if (state.documentType === "materialIssue") {
+    renderMaterialIssue();
+    return;
+  }
+
   const currentYear = yearFromDate(state.current.issueDate);
   const allRecent = sortRecent(state.proposals);
   const recent = allRecent.slice(0, 5);
@@ -728,46 +1302,39 @@ function render() {
           </div>
         </div>
 
-        <nav class="toolbar-actions command-bar" aria-label="Ukazi dokumenta">
-          <div class="command-section" role="group" aria-label="Dokument">
-            <button class="button toolbar-button" type="button" data-action="new" data-tooltip="Nov dokument: odpre svež predlog in ohrani zadnje uporabljene pametne podatke. Bližnjica: Ctrl/Cmd+N." aria-label="Nov dokument" data-busy-sensitive ${disabledAttr}>
-              ${icon("file-plus-2")} <span class="toolbar-button-label">Nov dokument</span>
-            </button>
-            <button class="button toolbar-button" type="button" data-action="save" data-tooltip="${escapeHtml(saveState.saveLabel)}: shrani predlog in mu po potrebi dodeli interno številko. Bližnjica: Ctrl/Cmd+S." aria-label="${escapeHtml(saveState.saveLabel)}" data-busy-sensitive ${disabledAttr}>
-              ${icon("save")} <span class="toolbar-button-label">${escapeHtml(saveState.saveLabel)}</span>
-            </button>
-          </div>
-          <span class="command-divider" aria-hidden="true"></span>
-          <div class="command-section" role="group" aria-label="Priloga">
-            <button class="button toolbar-button" type="button" data-action="attach" data-tooltip="Pripni ponudbo: dodaj datoteko PDF ali sliko k predlogu." aria-label="Pripni ponudbo" data-busy-sensitive ${disabledAttr}>
-              ${icon("paperclip")} <span class="toolbar-button-label">Pripni ponudbo</span>
-            </button>
-          </div>
-          <span class="command-divider" aria-hidden="true"></span>
-          <div class="command-section" role="group" aria-label="Izvoz">
-            <button class="button toolbar-button toolbar-button-primary" type="button" data-action="download" data-tooltip="Prenesi PDF: shrani predlog in prenese končni dokument." aria-label="Prenesi PDF" data-busy-sensitive ${disabledAttr}>
-              ${icon("download")} <span class="toolbar-button-label">Prenesi PDF</span>
-            </button>
-            <button class="button toolbar-button" type="button" data-action="print" data-tooltip="Natisni: pripravi dokument PDF in odpre tiskanje. Bližnjica: Ctrl/Cmd+P." aria-label="Natisni" data-busy-sensitive ${disabledAttr}>
-              ${icon("printer")} <span class="toolbar-button-label">Natisni</span>
-            </button>
-          </div>
-        </nav>
+        <div class="toolbar-controls">
+          <nav class="toolbar-actions command-bar" aria-label="Ukazi dokumenta">
+            <div class="command-section" role="group" aria-label="Dokument">
+              <button class="button toolbar-button" type="button" data-action="new" data-tooltip="Nov dokument: odpre svež predlog in ohrani zadnje uporabljene pametne podatke. Bližnjica: Ctrl/Cmd+N." aria-label="Nov dokument" data-busy-sensitive ${disabledAttr}>
+                ${icon("file-plus-2")} <span class="toolbar-button-label">Nov dokument</span>
+              </button>
+              <button class="button toolbar-button" type="button" data-action="save" data-tooltip="${escapeHtml(saveState.saveLabel)}: shrani predlog in mu po potrebi dodeli interno številko. Bližnjica: Ctrl/Cmd+S." aria-label="${escapeHtml(saveState.saveLabel)}" data-busy-sensitive ${disabledAttr}>
+                ${icon("save")} <span class="toolbar-button-label">${escapeHtml(saveState.saveLabel)}</span>
+              </button>
+            </div>
+            <span class="command-divider" aria-hidden="true"></span>
+            <div class="command-section" role="group" aria-label="Priloga">
+              <button class="button toolbar-button" type="button" data-action="attach" data-tooltip="Pripni ponudbo: dodaj datoteko PDF ali sliko k predlogu." aria-label="Pripni ponudbo" data-busy-sensitive ${disabledAttr}>
+                ${icon("paperclip")} <span class="toolbar-button-label">Pripni ponudbo</span>
+              </button>
+            </div>
+            <span class="command-divider" aria-hidden="true"></span>
+            <div class="command-section" role="group" aria-label="Izvoz">
+              <button class="button toolbar-button toolbar-button-primary" type="button" data-action="download" data-tooltip="Prenesi PDF: shrani predlog in prenese končni dokument." aria-label="Prenesi PDF" data-busy-sensitive ${disabledAttr}>
+                ${icon("download")} <span class="toolbar-button-label">Prenesi PDF</span>
+              </button>
+              <button class="button toolbar-button" type="button" data-action="print" data-tooltip="Natisni: pripravi dokument PDF in odpre tiskanje. Bližnjica: Ctrl/Cmd+P." aria-label="Natisni" data-busy-sensitive ${disabledAttr}>
+                ${icon("printer")} <span class="toolbar-button-label">Natisni</span>
+              </button>
+            </div>
+          </nav>
+          ${renderEvidenceSwitcher("proposal", disabledAttr)}
+        </div>
       </header>
 
       <section class="workspace">
         <div class="document-stage">
           <div class="paper-frame" style="${documentLayoutCssVariables()}">
-            ${
-              state.current.offerAttachmentId
-                ? `<span class="paper-attachment-clip" data-tooltip="Attachment added" aria-label="Attachment added" role="img" tabindex="0">
-                    <svg viewBox="0 0 40 120" aria-hidden="true">
-                      <path d="M25 12a13 13 0 0 1 13 13v63c0 13-7 22-17 22S4 101 4 87V20C4 9 11 3 18 3s13 6 13 16v62" />
-                      <path d="M16 12a6 6 0 0 1 6 6v62c0 6 2 9 5 9s6-3 6-9V17" />
-                    </svg>
-                  </span>`
-                : ""
-            }
             <article class="paper" aria-label="Predlog nakupa drobnega materiala">
             <div class="paper-header">
               ${centerRogLogoMarkup()}
@@ -840,7 +1407,7 @@ function render() {
                 </div>
                 <div class="signature-box">
                   <span class="signature-label">Podpis vodje laba</span>
-                  <span class="signature-rule" aria-hidden="true"></span>
+                  ${renderSignatureZone("proposal")}
                 </div>
               </div>
 
@@ -944,6 +1511,8 @@ function render() {
             </div>
           </section>
 
+          ${renderSignaturePanel()}
+
           <section class="panel">
             <div class="panel-header">
               <span class="panel-icon">${icon("pencil")}</span>
@@ -996,6 +1565,7 @@ function render() {
       </button>
 
       <input class="hidden-input" type="file" id="offerInput" accept="application/pdf,image/*" />
+      <input class="hidden-input" type="file" id="signatureInput" accept="image/png,image/jpeg,.png,.jpg,.jpeg" />
 
       ${
         state.historyModalOpen
@@ -1181,6 +1751,8 @@ function bindEvents() {
   }));
 
   document.getElementById("offerInput")?.addEventListener("change", handleOfferSelected);
+  document.getElementById("signatureInput")?.addEventListener("change", handleSignatureSelected);
+  bindSignatureEvents();
   bindOfferDropzone();
   bindOnboardingEvents();
 
@@ -1195,6 +1767,196 @@ function bindEvents() {
     document.addEventListener("scroll", positionOnboardingTooltip, { passive: true, capture: true });
     onboardingViewportBound = true;
   }
+}
+
+function clearMaterialValidation() {
+  state.materialValidation = {
+    message: "",
+    fields: {},
+    firstInvalidField: ""
+  };
+}
+
+function clearMaterialValidationField(fieldName) {
+  if (!state.materialValidation.fields?.[fieldName]) return;
+  const fields = { ...state.materialValidation.fields };
+  delete fields[fieldName];
+  state.materialValidation = {
+    ...state.materialValidation,
+    fields,
+    message: Object.keys(fields).length ? state.materialValidation.message : "",
+    firstInvalidField:
+      state.materialValidation.firstInvalidField === fieldName
+        ? Object.keys(fields)[0] || ""
+        : state.materialValidation.firstInvalidField
+  };
+}
+
+function bindMaterialIssueEvents() {
+  document.querySelectorAll("[data-material-field]").forEach((field) => {
+    field.addEventListener("input", (event) => {
+      const name = event.currentTarget.dataset.materialField;
+      state.currentMaterialIssue[name] = event.currentTarget.value;
+      clearMaterialValidationField(name);
+      if (name === "issueDate") {
+        state.currentMaterialIssue.year = yearFromDate(state.currentMaterialIssue.issueDate);
+      }
+      markDirty();
+    });
+
+    field.addEventListener("change", (event) => {
+      const name = event.currentTarget.dataset.materialField;
+      if (name !== "labCode") return;
+      state.currentMaterialIssue.labCode = normalizeLabCode(event.currentTarget.value);
+      event.currentTarget.value = state.currentMaterialIssue.labCode;
+      markDirty();
+    });
+  });
+
+  document.querySelectorAll("[data-material-item-field]").forEach((field) => {
+    field.addEventListener("input", handleMaterialRowInput);
+    field.addEventListener("change", handleMaterialRowInput);
+  });
+
+  document.querySelectorAll("[data-remove-material-row]").forEach((button) => {
+    button.addEventListener("click", () => removeMaterialRow(button.dataset.removeMaterialRow));
+  });
+
+  document.querySelectorAll("[data-load-material-issue-id]").forEach((button) => {
+    button.addEventListener("click", () => loadMaterialIssue(button.dataset.loadMaterialIssueId));
+  });
+
+  document.querySelector("[data-material-status]")?.addEventListener("change", async (event) => {
+    await updateMaterialIssueStatus(event.currentTarget.value);
+  });
+
+  document.getElementById("signatureInput")?.addEventListener("change", handleSignatureSelected);
+  bindSignatureEvents();
+
+  document.querySelectorAll("[data-action]").forEach((button) => {
+    button.addEventListener("click", () => handleAction(button.dataset.action));
+  });
+}
+
+function bindSignatureEvents() {
+  document.querySelector("[data-signature-size]")?.addEventListener("input", (event) => {
+    const placement = currentSignaturePlacement();
+    updateCurrentSignaturePlacement(
+      { ...placement, width: Number(event.currentTarget.value) },
+      { rerender: false }
+    );
+    const signatureObject = document.querySelector("[data-signature-object]");
+    if (signatureObject) {
+      const nextPlacement = currentSignaturePlacement();
+      signatureObject.style.left = `${nextPlacement.x}%`;
+      signatureObject.style.width = `${nextPlacement.width}%`;
+    }
+  });
+
+  const zone = document.querySelector("[data-signature-zone]");
+  const signatureObject = zone?.querySelector("[data-signature-object]");
+  if (!(zone instanceof HTMLElement) || !(signatureObject instanceof HTMLElement)) return;
+
+  signatureObject.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const resizing = event.target instanceof Element && event.target.closest("[data-signature-resize]");
+    const zoneRect = zone.getBoundingClientRect();
+    const objectRect = signatureObject.getBoundingClientRect();
+    const startPlacement = currentSignaturePlacement();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const pointerId = event.pointerId;
+    signatureObject.setPointerCapture(pointerId);
+    signatureObject.classList.add("is-adjusting");
+
+    const handleMove = (moveEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      if (resizing) {
+        const deltaPercent = ((moveEvent.clientX - startX) / zoneRect.width) * 100;
+        const width = Math.min(100 - startPlacement.x, Math.max(25, startPlacement.width + deltaPercent));
+        updateCurrentSignaturePlacement(
+          { ...startPlacement, width },
+          { rerender: false }
+        );
+        const placement = currentSignaturePlacement();
+        signatureObject.style.left = `${placement.x}%`;
+        signatureObject.style.width = `${placement.width}%`;
+        return;
+      }
+
+      const maxLeft = Math.max(0, zoneRect.width - objectRect.width);
+      const maxTop = Math.max(0, zoneRect.height - objectRect.height);
+      const left = Math.min(maxLeft, Math.max(0, objectRect.left - zoneRect.left + moveEvent.clientX - startX));
+      const top = Math.min(maxTop, Math.max(0, objectRect.top - zoneRect.top + moveEvent.clientY - startY));
+      const x = zoneRect.width ? (left / zoneRect.width) * 100 : 0;
+      const y = zoneRect.height ? (top / zoneRect.height) * 100 : 0;
+      updateCurrentSignaturePlacement(
+        { ...startPlacement, x, y },
+        { rerender: false }
+      );
+      const placement = currentSignaturePlacement();
+      signatureObject.style.left = `${placement.x}%`;
+      signatureObject.style.top = `${placement.y}%`;
+    };
+
+    const handleEnd = (endEvent) => {
+      if (endEvent.pointerId !== pointerId) return;
+      signatureObject.classList.remove("is-adjusting");
+      signatureObject.removeEventListener("pointermove", handleMove);
+      signatureObject.removeEventListener("pointerup", handleEnd);
+      signatureObject.removeEventListener("pointercancel", handleEnd);
+    };
+
+    signatureObject.addEventListener("pointermove", handleMove);
+    signatureObject.addEventListener("pointerup", handleEnd);
+    signatureObject.addEventListener("pointercancel", handleEnd);
+  });
+}
+
+function handleMaterialRowInput(event) {
+  const field = event.currentTarget;
+  const row = state.currentMaterialIssue.items.find(
+    (item) => item.id === field.dataset.materialItemId
+  );
+  if (!row) return;
+
+  const name = field.dataset.materialItemField;
+  row[name] = name === "tariffCents" ? normalizeMaterialTariff(field.value) : field.value;
+  clearMaterialValidationField(`items.${row.id}.${name}`);
+  markDirty();
+
+  const amount = document.querySelector(`[data-material-row-amount="${CSS.escape(row.id)}"]`);
+  if (amount) amount.textContent = formatCurrency(materialRowAmountCents(row));
+  const total = document.querySelector("[data-material-total]");
+  if (total) total.textContent = formatCurrency(materialIssueTotalCents(state.currentMaterialIssue));
+}
+
+function addMaterialRow() {
+  if (state.currentMaterialIssue.items.length >= 8) {
+    showToast("Na eno izdajnico lahko dodaš največ 8 vrstic.");
+    return;
+  }
+  state.currentMaterialIssue.items.push(createBlankMaterialRow());
+  markDirty();
+  render();
+  window.requestAnimationFrame(() => {
+    document
+      .querySelector("tr:last-child [data-material-item-field='name']")
+      ?.focus();
+  });
+}
+
+function removeMaterialRow(rowId) {
+  if (state.currentMaterialIssue.items.length <= 1) return;
+  state.currentMaterialIssue.items = state.currentMaterialIssue.items.filter(
+    (row) => row.id !== rowId
+  );
+  Object.keys(state.materialValidation.fields || {})
+    .filter((field) => field.startsWith(`items.${rowId}.`))
+    .forEach(clearMaterialValidationField);
+  markDirty();
+  render();
 }
 
 function bindOfferDropzone() {
@@ -1588,6 +2350,140 @@ function showSuggestions(input) {
   wrapper.append(popover);
 }
 
+async function handleSignatureSelected(event) {
+  const [file] = event.currentTarget.files || [];
+  event.currentTarget.value = "";
+  if (!file) return;
+
+  try {
+    const header = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+    const hasPngHeader =
+      header.length === 8 &&
+      header[0] === 0x89 &&
+      header[1] === 0x50 &&
+      header[2] === 0x4e &&
+      header[3] === 0x47 &&
+      header[4] === 0x0d &&
+      header[5] === 0x0a &&
+      header[6] === 0x1a &&
+      header[7] === 0x0a;
+    const hasJpegHeader =
+      header.length >= 3 &&
+      header[0] === 0xff &&
+      header[1] === 0xd8 &&
+      header[2] === 0xff;
+
+    if (!hasPngHeader && !hasJpegHeader) {
+      showToast("Podpis mora biti fotografija PNG ali JPG.");
+      return;
+    }
+
+    if (file.size > MAX_SIGNATURE_FILE_SIZE) {
+      showToast("Slika podpisa je prevelika. Največja dovoljena velikost je 2 MB.");
+      return;
+    }
+
+    const normalizedBlob = await prepareSignatureImage(file);
+    const asset = {
+      id: SIGNATURE_ASSET_ID,
+      fileName: `${file.name.replace(/\.[^.]+$/, "") || "podpis"}.png`,
+      mimeType: "image/png",
+      size: normalizedBlob.size,
+      blob: normalizedBlob,
+      updatedAt: new Date().toISOString()
+    };
+
+    await saveAsset(asset);
+    setSignatureAsset(asset);
+    render();
+    showToast("Podpis je shranjen. Zdaj ga lahko vstaviš v izbrani dokument.");
+  } catch (error) {
+    console.error(error);
+    showToast("Podpisa ni bilo mogoče shraniti.");
+  }
+}
+
+async function prepareSignatureImage(file) {
+  const sourceUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("Slike podpisa ni bilo mogoče prebrati."));
+      element.src = sourceUrl;
+    });
+
+    const maxDimension = 1600;
+    const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    context.drawImage(image, 0, 0, width, height);
+
+    const pixels = context.getImageData(0, 0, width, height);
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const index = (y * width + x) * 4;
+        const red = pixels.data[index];
+        const green = pixels.data[index + 1];
+        const blue = pixels.data[index + 2];
+        const alpha = pixels.data[index + 3];
+        const isInk = alpha > 18 && Math.min(red, green, blue) < 238;
+        if (isInk) {
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
+        if (red > 242 && green > 242 && blue > 242) {
+          pixels.data[index + 3] = 0;
+        }
+      }
+    }
+
+    if (maxX < minX || maxY < minY) {
+      throw new Error("Na sliki podpisa ni bilo mogoče zaznati.");
+    }
+
+    context.putImageData(pixels, 0, 0);
+    const padding = Math.max(4, Math.round(Math.min(width, height) * 0.02));
+    const sourceX = Math.max(0, minX - padding);
+    const sourceY = Math.max(0, minY - padding);
+    const sourceWidth = Math.min(width - sourceX, maxX - minX + 1 + padding * 2);
+    const sourceHeight = Math.min(height - sourceY, maxY - minY + 1 + padding * 2);
+    const output = document.createElement("canvas");
+    output.width = sourceWidth;
+    output.height = sourceHeight;
+    output
+      .getContext("2d")
+      .drawImage(canvas, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
+
+    const blob = await new Promise((resolve) => output.toBlob(resolve, "image/png"));
+    if (!blob) throw new Error("Podpisa ni bilo mogoče pripraviti.");
+    return blob;
+  } finally {
+    URL.revokeObjectURL(sourceUrl);
+  }
+}
+
+async function removeSignature() {
+  if (!state.signatureAsset) return;
+  await deleteAsset(SIGNATURE_ASSET_ID);
+  setSignatureAsset(null);
+  currentSignatureDocument().signaturePlacement = normalizeSignaturePlacement();
+  markDirty();
+  render();
+  showToast("Shranjeni podpis je odstranjen.");
+}
+
 async function handleAction(action) {
   try {
     if (isOnboardingCalculatorDemoStep()) {
@@ -1595,17 +2491,59 @@ async function handleAction(action) {
     }
 
     if (action === "new") {
-      await newDocument();
+      if (state.documentType === "materialIssue") {
+        await newMaterialIssue();
+      } else {
+        await newDocument();
+      }
     } else if (action === "save") {
-      await saveCurrentDocument();
+      if (state.documentType === "materialIssue") {
+        await saveCurrentMaterialIssue();
+      } else {
+        await saveCurrentDocument();
+      }
     } else if (action === "attach") {
       document.getElementById("offerInput")?.click();
+    } else if (action === "upload-signature") {
+      document.getElementById("signatureInput")?.click();
+    } else if (action === "insert-signature") {
+      if (!state.signatureAsset) {
+        document.getElementById("signatureInput")?.click();
+      } else {
+        updateCurrentSignaturePlacement({
+          inserted: true,
+          x: 5,
+          y: 4,
+          width: 90
+        });
+        showToast("Podpis je vstavljen v trenutni dokument.");
+      }
+    } else if (action === "remove-inserted-signature") {
+      updateCurrentSignaturePlacement({
+        ...currentSignaturePlacement(),
+        inserted: false
+      });
+      showToast("Podpis je odstranjen iz trenutnega dokumenta.");
+    } else if (action === "remove-signature") {
+      await removeSignature();
     } else if (action === "remove-attachment") {
       await removeAttachment();
     } else if (action === "download") {
-      await exportPdf("download");
+      if (state.documentType === "materialIssue") {
+        await exportMaterialIssuePdf("download");
+      } else {
+        await exportPdf("download");
+      }
     } else if (action === "print") {
-      await exportPdf("print");
+      if (state.documentType === "materialIssue") {
+        await exportMaterialIssuePdf("print");
+      } else {
+        await exportPdf("print");
+      }
+    } else if (action === "switch-document") {
+      await switchDocumentType();
+    } else if (action === "add-material-row") {
+      addMaterialRow();
     } else if (action === "open-history") {
       openHistoryModal();
     } else if (action === "close-history") {
@@ -1689,11 +2627,19 @@ async function continueUnsavedAction() {
   render();
 
   if (action.type === "new") {
-    await newDocument({ skipUnsavedGuard: true });
+    if (state.documentType === "materialIssue") {
+      await newMaterialIssue({ skipUnsavedGuard: true });
+    } else {
+      await newDocument({ skipUnsavedGuard: true });
+    }
   } else if (action.type === "load") {
     await loadExistingDocument(action.proposalId, { skipUnsavedGuard: true });
+  } else if (action.type === "load-material-issue") {
+    await loadMaterialIssue(action.issueId, { skipUnsavedGuard: true });
   } else if (action.type === "delete") {
     openDeleteConfirm(action.proposalId, { skipUnsavedGuard: true });
+  } else if (action.type === "switch-document") {
+    await switchDocumentType({ skipUnsavedGuard: true, target: action.target });
   }
 }
 
@@ -1916,6 +2862,185 @@ async function updateDocumentStatus(proposalId, documentStatus) {
   render();
 }
 
+async function switchDocumentType({ skipUnsavedGuard = false, target = "" } = {}) {
+  const nextType = target || (state.documentType === "proposal" ? "materialIssue" : "proposal");
+  if (nextType === state.documentType) return;
+
+  if (state.dirty && !skipUnsavedGuard) {
+    requestUnsavedChanges({ type: "switch-document", target: nextType });
+    return;
+  }
+
+  state.documentType = nextType;
+  state.toolsPanelOpen = false;
+  state.historyModalOpen = false;
+  state.statusMenu = null;
+  state.documentPopover = null;
+  clearDirty();
+  clearValidation();
+  clearMaterialValidation();
+  document.title =
+    nextType === "materialIssue"
+      ? "Izdajnica materiala"
+      : "Predlog nakupa drobnega materiala";
+  render();
+}
+
+function focusMaterialValidationTarget(validation) {
+  const field = validation?.firstInvalidField;
+  if (!field) return;
+
+  let selector = `[data-material-field="${CSS.escape(field)}"]`;
+  if (field.startsWith("items.")) {
+    const [, rowId, itemField] = field.split(".");
+    selector = `[data-material-item-id="${CSS.escape(rowId)}"][data-material-item-field="${CSS.escape(itemField)}"]`;
+  }
+
+  window.setTimeout(() => {
+    const target = document.querySelector(selector);
+    if (!(target instanceof HTMLElement)) return;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ block: "center", inline: "nearest" });
+  }, 60);
+}
+
+async function validateCurrentMaterialIssue() {
+  const validation = validateMaterialIssue(state.currentMaterialIssue);
+  state.materialValidation = validation;
+  if (!validation.valid) {
+    render();
+    focusMaterialValidationTarget(validation);
+  }
+  return validation;
+}
+
+async function newMaterialIssue({ skipUnsavedGuard = false } = {}) {
+  if (state.dirty && !skipUnsavedGuard) {
+    requestUnsavedChanges({ type: "new" });
+    return;
+  }
+
+  const lastIssue = sortRecent(state.materialIssues)[0];
+  const lastProposal = sortRecent(state.proposals)[0] || state.current;
+  state.currentMaterialIssue = createBlankMaterialIssue(lastIssue, lastProposal);
+  state.toolsPanelOpen = false;
+  clearDirty();
+  clearMaterialValidation();
+  render();
+}
+
+async function saveCurrentMaterialIssue({
+  silent = false,
+  requireValid = false,
+  status = ""
+} = {}) {
+  if (requireValid) {
+    const validation = await validateCurrentMaterialIssue();
+    if (!validation.valid) return null;
+  } else {
+    clearMaterialValidation();
+  }
+
+  const candidate = status
+    ? { ...state.currentMaterialIssue, status }
+    : state.currentMaterialIssue;
+  const saved = materialIssueWithSaveMetadata(candidate, state.materialIssues);
+  await persistMaterialIssue(saved);
+  state.currentMaterialIssue = saved;
+  state.materialIssues = sortRecent(await getAllMaterialIssues());
+  clearDirty();
+  render();
+  if (!silent) {
+    showToast(
+      saved.status === "draft"
+        ? `Osnutek ${saved.serial} je shranjen.`
+        : `Izdajnica ${saved.serial} je shranjena.`
+    );
+  }
+  return saved;
+}
+
+async function loadMaterialIssue(id, { skipUnsavedGuard = false } = {}) {
+  if (state.dirty && !skipUnsavedGuard) {
+    requestUnsavedChanges({ type: "load-material-issue", issueId: id });
+    return;
+  }
+
+  const issue = state.materialIssues.find((item) => item.id === id);
+  if (!issue) return;
+  state.currentMaterialIssue = {
+    ...issue,
+    items: (issue.items || []).map((row) => ({ ...row }))
+  };
+  state.toolsPanelOpen = false;
+  clearDirty();
+  clearMaterialValidation();
+  render();
+}
+
+async function updateMaterialIssueStatus(nextStatus) {
+  const issue = state.currentMaterialIssue;
+  const currentStatus = issue.status || "draft";
+
+  if (nextStatus === "paid" && !["printed", "paid", "collected"].includes(currentStatus)) {
+    showToast("Izdajnico najprej natisnite.");
+    render();
+    return;
+  }
+
+  if (nextStatus === "collected" && !["paid", "collected"].includes(currentStatus)) {
+    showToast("Material lahko označite kot prevzet šele po plačilu.");
+    render();
+    return;
+  }
+
+  const requiresValidation = nextStatus !== "draft";
+  const saved = await saveCurrentMaterialIssue({
+    silent: true,
+    requireValid: requiresValidation,
+    status: nextStatus
+  });
+  if (!saved) return;
+  showToast(`Status: ${materialStatusLabel(nextStatus)}.`);
+}
+
+async function exportMaterialIssuePdf(mode) {
+  setBusy(true);
+  try {
+    const status =
+      mode === "print" && state.currentMaterialIssue.status === "draft"
+        ? "printed"
+        : state.currentMaterialIssue.status;
+    const saved = await saveCurrentMaterialIssue({
+      silent: true,
+      requireValid: true,
+      status
+    });
+    if (!saved) return;
+
+    const pdfBlob = await createMaterialIssuePdfBlob(saved, state.signatureAsset);
+    const fileName = `${safeFileName(`izdajnica-${saved.serial}`)}.pdf`;
+
+    if (mode === "print") {
+      const url = URL.createObjectURL(pdfBlob);
+      const printWindow = window.open(url, "_blank");
+      if (!printWindow) {
+        downloadBlob(pdfBlob, fileName);
+        showToast("Brskalnik je blokiral tiskanje, zato sem prenesel izdajnico PDF.");
+      } else {
+        printWindow.addEventListener("load", () => printWindow.print(), { once: true });
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        showToast("Izdajnica je pripravljena za tiskanje.");
+      }
+    } else {
+      downloadBlob(pdfBlob, fileName);
+      showToast("Izdajnica PDF je pripravljena za prenos.");
+    }
+  } finally {
+    setBusy(false);
+  }
+}
+
 async function newDocument({ skipUnsavedGuard = false } = {}) {
   if (state.dirty && !skipUnsavedGuard) {
     requestUnsavedChanges({ type: "new" });
@@ -2046,8 +3171,14 @@ async function exportPdf(mode) {
   try {
     const saved = await saveCurrentDocument({ silent: true });
     if (!saved) return;
-    const attachment = saved.offerAttachmentId ? await getAttachment(saved.offerAttachmentId) : null;
-    const pdfBlob = await createCombinedPdfBlob(saved, attachment);
+    const attachment =
+      mode === "download" && saved.offerAttachmentId
+        ? await getAttachment(saved.offerAttachmentId)
+        : null;
+    const pdfBlob =
+      mode === "print"
+        ? await createProposalPdfBlob(saved, state.signatureAsset)
+        : await createCombinedPdfBlob(saved, attachment, state.signatureAsset);
     const fileName = `${safeFileName(`predlog-${saved.serial}`)}.pdf`;
 
     if (mode === "print") {
@@ -2091,9 +3222,17 @@ async function clearLocalPreviewServiceWorker() {
 
 async function init() {
   await deleteOrphanAttachments();
-  state.proposals = sortRecent(await getAllProposals());
+  const [proposals, materialIssues, signatureAsset] = await Promise.all([
+    getAllProposals(),
+    getAllMaterialIssues(),
+    getAsset(SIGNATURE_ASSET_ID)
+  ]);
+  state.proposals = sortRecent(proposals);
+  state.materialIssues = sortRecent(materialIssues);
+  setSignatureAsset(signatureAsset);
   const last = state.proposals[0];
   state.current = last ? createBlankProposal(last) : createBlankProposal();
+  state.currentMaterialIssue = createBlankMaterialIssue(state.materialIssues[0], last);
   state.attachment = null;
   state.persistedAttachmentId = "";
   openOnboardingIfNeeded();

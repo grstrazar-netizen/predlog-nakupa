@@ -15,5 +15,5 @@
   "engines": {
     "node": ">=20"
   },
-  "description": "Document-first local PWA for issuing Predlog nakupa drobnega materiala documents."
+  "description": "Document-first local PWA for purchase proposals and material issue documents."
 }

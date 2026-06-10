@@ -57,6 +57,43 @@ async function loadLogoPngBytes() {
   return logoPngBytesPromise;
 }
 
+async function embedSignature(pdf, signatureAsset) {
+  if (!signatureAsset?.blob) return null;
+  const bytes = new Uint8Array(await signatureAsset.blob.arrayBuffer());
+  const mimeType = String(signatureAsset.mimeType || signatureAsset.blob.type || "").toLowerCase();
+  const fileName = String(signatureAsset.fileName || "").toLowerCase();
+  if (mimeType === "image/jpeg" || mimeType === "image/jpg" || /\.jpe?g$/.test(fileName)) {
+    return pdf.embedJpg(bytes);
+  }
+  return pdf.embedPng(bytes);
+}
+
+function drawContainedImage(page, image, box) {
+  if (!image) return;
+  const scale = Math.min(box.width / image.width, box.height / image.height);
+  const width = image.width * scale;
+  const height = image.height * scale;
+  page.drawImage(image, {
+    x: box.x + (box.width - width) / 2,
+    y: topToPdfY(box.top, height),
+    width,
+    height
+  });
+}
+
+function placedSignatureBox(box, placement) {
+  if (!placement?.inserted) return null;
+  const widthPercent = Math.min(100, Math.max(25, Number(placement.width) || 90));
+  const xPercent = Math.min(100 - widthPercent, Math.max(0, Number(placement.x) || 0));
+  const yPercent = Math.min(70, Math.max(0, Number(placement.y) || 0));
+  return {
+    x: box.x + box.width * (xPercent / 100),
+    top: box.top + box.height * (yPercent / 100),
+    width: box.width * (widthPercent / 100),
+    height: box.height * ((100 - yPercent) / 100)
+  };
+}
+
 function inferAttachmentKind(attachment) {
   const mimeType = String(attachment?.blob?.type || attachment?.mimeType || "").toLowerCase();
   if (mimeType === "application/pdf") return "pdf";
@@ -181,7 +218,7 @@ async function embedDocumentFonts(pdf) {
   return { regular, semibold, bold, italic };
 }
 
-async function drawProposalPage(pdf, proposal) {
+async function drawProposalPage(pdf, proposal, signatureAsset) {
   const { rgb } = window.PDFLib;
   const { page: pageSize, content, fonts: fontSizes, positions } = DOCUMENT_LAYOUT;
   const page = pdf.addPage([pageSize.widthPt, pageSize.heightPt]);
@@ -298,6 +335,15 @@ async function drawProposalPage(pdf, proposal) {
   drawTopLine(page, right - 91, right, positions.issueTopPt + 18, {
     color: muted
   });
+  const proposalSignatureBox = placedSignatureBox({
+    x: right - 91,
+    top: positions.issueTopPt - 13,
+    width: 91,
+    height: 30
+  }, proposal.signaturePlacement);
+  if (proposalSignatureBox) {
+    drawContainedImage(page, await embedSignature(pdf, signatureAsset), proposalSignatureBox);
+  }
 
   drawTopText(
     page,
@@ -346,14 +392,14 @@ async function drawProposalPage(pdf, proposal) {
   });
 }
 
-export async function createCombinedPdfBlob(proposal, attachment) {
+export async function createCombinedPdfBlob(proposal, attachment, signatureAsset = null) {
   if (!window.PDFLib) {
     throw new Error("Knjižnica za PDF ni naložena.");
   }
 
   const { PDFDocument } = window.PDFLib;
   const pdf = await PDFDocument.create();
-  await drawProposalPage(pdf, proposal);
+  await drawProposalPage(pdf, proposal, signatureAsset);
 
   if (attachment?.blob) {
     const attachmentKind = inferAttachmentKind(attachment);
@@ -370,6 +416,18 @@ export async function createCombinedPdfBlob(proposal, attachment) {
     }
   }
 
+  const bytes = await pdf.save();
+  return new Blob([bytes], { type: "application/pdf" });
+}
+
+export async function createProposalPdfBlob(proposal, signatureAsset = null) {
+  if (!window.PDFLib) {
+    throw new Error("Knjižnica za PDF ni naložena.");
+  }
+
+  const { PDFDocument } = window.PDFLib;
+  const pdf = await PDFDocument.create();
+  await drawProposalPage(pdf, proposal, signatureAsset);
   const bytes = await pdf.save();
   return new Blob([bytes], { type: "application/pdf" });
 }

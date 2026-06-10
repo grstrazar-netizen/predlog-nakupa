@@ -1,6 +1,6 @@
-# Predlog nakupa drobnega materiala
+# Dokumenti materiala
 
-Dokumentno usmerjena lokalna progresivna spletna aplikacija za izdajo obrazca **Predlog nakupa drobnega materiala**.
+Dokumentno usmerjena lokalna progresivna spletna aplikacija za obrazca **Predlog nakupa drobnega materiala** in **Izdajnica materiala**.
 
 ## Zagon
 
@@ -50,6 +50,12 @@ vercel --prod
 - prikaže umirjen povzetek letne porabe iz shranjenih dokumentov,
 - samodejno sešteje EUR zneske iz alinej v obrazložitvi in jih vpiše kot okvirno vrednost,
 - loči interno številko dokumenta od računovodske vrstice `Št.: 2026- ____`.
+- z enim gumbom preklopi na izdajnico materiala z ločeno lokalno evidenco,
+- izdajnico samodejno opremi z datumom, uro, krajem in številko `IZD-KOV-2026-001`,
+- omogoča dinamične vrstice materiala ter izračun `količina × tarifa`,
+- shrani nepopolno izdajnico kot osnutek, pred tiskom in izvozom pa preveri obvezna polja,
+- vodi statuse izdajnice: osnutek, natisnjeno, plačano in material prevzet,
+- pripravi profesionalno črno-belo izdajnico v ležečem formatu A4.
 
 ## Podatki
 
