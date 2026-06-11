@@ -74,6 +74,7 @@ const state = {
   signatureUrl: "",
   historyModalOpen: false,
   toolsPanelOpen: false,
+  evidenceMenuOpen: false,
   statusMenu: null,
   documentPopover: null,
   deleteConfirmId: "",
@@ -896,33 +897,138 @@ function renderToast() {
   document.body.append(toast);
 }
 
-function renderEvidenceSwitcher(activeType, disabledAttr = "") {
-  const proposalActive = activeType === "proposal";
-  const proposalControl = proposalActive
-    ? `<span class="evidence-switcher-option is-active" aria-current="page">
-        ${icon("file-text")}
-        <span>Predlogi nakupa</span>
-      </span>`
-    : `<button class="evidence-switcher-option" type="button" data-action="switch-document" data-tooltip="Odpri ločeno evidenco predlogov za nakup." aria-label="Odpri evidenco predlogov za nakup" data-busy-sensitive ${disabledAttr}>
-        ${icon("file-text")}
-        <span>Predlogi nakupa</span>
-      </button>`;
-  const issueControl = activeType === "materialIssue"
-    ? `<span class="evidence-switcher-option is-active" aria-current="page">
-        ${icon("clipboard-list")}
-        <span>Izdajnice materiala</span>
-      </span>`
-    : `<button class="evidence-switcher-option" type="button" data-action="switch-document" data-tooltip="Odpri ločeno evidenco izdajnic materiala." aria-label="Odpri evidenco izdajnic materiala" data-busy-sensitive ${disabledAttr}>
-        ${icon("clipboard-list")}
-        <span>Izdajnice materiala</span>
-      </button>`;
+const EVIDENCE_TABS = [
+  {
+    type: "proposal",
+    label: "Predlogi nakupa",
+    icon: "file-text"
+  },
+  {
+    type: "materialIssue",
+    label: "Izdajnice materiala",
+    icon: "clipboard-list"
+  }
+];
+
+function evidenceTabMarkup(tab, activeType, disabledAttr = "") {
+  const isActive = tab.type === activeType;
+  return `
+    <button
+      class="evidence-tab evidence-tab-${escapeHtml(tab.type)}${isActive ? " is-active" : ""}"
+      type="button"
+      role="tab"
+      aria-selected="${isActive ? "true" : "false"}"
+      aria-controls="evidence-workspace"
+      tabindex="${isActive ? "0" : "-1"}"
+      data-evidence-tab
+      data-evidence-target="${escapeHtml(tab.type)}"
+      data-busy-sensitive
+      ${disabledAttr}
+    >
+      ${icon(tab.icon)}
+      <span>${escapeHtml(tab.label)}</span>
+    </button>
+  `;
+}
+
+function renderEvidenceTabs(activeType, disabledAttr = "") {
+  const activeTab = EVIDENCE_TABS.find((tab) => tab.type === activeType) || EVIDENCE_TABS[0];
+  return `
+    <nav class="evidence-navigation evidence-navigation-${escapeHtml(activeType)}" aria-label="Evidence dokumentov">
+      <div class="evidence-tabs-desktop" role="tablist" aria-label="Izberi evidenco">
+        ${EVIDENCE_TABS.map((tab) => evidenceTabMarkup(tab, activeType, disabledAttr)).join("")}
+      </div>
+
+      <div class="evidence-tabs-compact">
+        <button
+          class="evidence-compact-tab evidence-tab-${escapeHtml(activeTab.type)}"
+          type="button"
+          data-evidence-menu-toggle
+          aria-haspopup="menu"
+          aria-expanded="${state.evidenceMenuOpen ? "true" : "false"}"
+          data-busy-sensitive
+          ${disabledAttr}
+        >
+          ${icon(activeTab.icon)}
+          <span>${escapeHtml(activeTab.label)}</span>
+          ${icon("chevron-down")}
+        </button>
+        ${
+          state.evidenceMenuOpen
+            ? `<div class="evidence-menu" role="menu" aria-label="Izberi evidenco">
+                ${EVIDENCE_TABS.map(
+                  (tab) => `
+                    <button
+                      class="evidence-menu-option${tab.type === activeType ? " is-active" : ""}"
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked="${tab.type === activeType ? "true" : "false"}"
+                      data-evidence-target="${escapeHtml(tab.type)}"
+                    >
+                      <span class="evidence-menu-swatch evidence-menu-swatch-${escapeHtml(tab.type)}" aria-hidden="true"></span>
+                      ${icon(tab.icon)}
+                      <span>${escapeHtml(tab.label)}</span>
+                      ${tab.type === activeType ? icon("check") : ""}
+                    </button>
+                  `
+                ).join("")}
+              </div>`
+            : ""
+        }
+      </div>
+    </nav>
+  `;
+}
+
+function renderDocumentCommands(type, saveState, disabledAttr = "") {
+  if (type === "materialIssue") {
+    return `
+      <nav class="toolbar-actions command-bar side-command-bar" aria-label="Ukazi izdajnice">
+        <div class="command-section" role="group" aria-label="Dokument">
+          <button class="button toolbar-button" type="button" data-action="new" data-tooltip="Nova izdajnica. Bližnjica: Ctrl/Cmd+N." aria-label="Nova izdajnica" data-busy-sensitive ${disabledAttr}>
+            ${icon("file-plus-2")}
+          </button>
+          <button class="button toolbar-button" type="button" data-action="save" data-tooltip="${escapeHtml(saveState.saveLabel)}. Nepopolno izdajnico lahko shraniš kot osnutek. Bližnjica: Ctrl/Cmd+S." aria-label="${escapeHtml(saveState.saveLabel)}" data-busy-sensitive ${disabledAttr}>
+            ${icon("save")}
+          </button>
+        </div>
+        <span class="command-divider" aria-hidden="true"></span>
+        <div class="command-section" role="group" aria-label="Izvoz">
+          <button class="button toolbar-button toolbar-button-primary" type="button" data-action="download" data-tooltip="Prenesi izdajnico v formatu PDF. Pred izvozom morajo biti izpolnjena vsa obvezna polja." aria-label="Prenesi PDF" data-busy-sensitive ${disabledAttr}>
+            ${icon("download")}
+          </button>
+          <button class="button toolbar-button" type="button" data-action="print" data-tooltip="Natisni izdajnico A4. Status se spremeni v Natisnjeno. Bližnjica: Ctrl/Cmd+P." aria-label="Natisni izdajnico" data-busy-sensitive ${disabledAttr}>
+            ${icon("printer")}
+          </button>
+        </div>
+      </nav>
+    `;
+  }
 
   return `
-    <nav class="evidence-switcher" aria-label="Preklop med evidencama">
-      <span class="evidence-switcher-caption">Preklop evidence</span>
-      <div class="evidence-switcher-options">
-        ${proposalControl}
-        ${issueControl}
+    <nav class="toolbar-actions command-bar side-command-bar" aria-label="Ukazi dokumenta">
+      <div class="command-section" role="group" aria-label="Dokument">
+        <button class="button toolbar-button" type="button" data-action="new" data-tooltip="Nov dokument: odpre svež predlog in ohrani zadnje uporabljene pametne podatke. Bližnjica: Ctrl/Cmd+N." aria-label="Nov dokument" data-busy-sensitive ${disabledAttr}>
+          ${icon("file-plus-2")}
+        </button>
+        <button class="button toolbar-button" type="button" data-action="save" data-tooltip="${escapeHtml(saveState.saveLabel)}: shrani predlog in mu po potrebi dodeli interno številko. Bližnjica: Ctrl/Cmd+S." aria-label="${escapeHtml(saveState.saveLabel)}" data-busy-sensitive ${disabledAttr}>
+          ${icon("save")}
+        </button>
+      </div>
+      <span class="command-divider" aria-hidden="true"></span>
+      <div class="command-section" role="group" aria-label="Priloga">
+        <button class="button toolbar-button" type="button" data-action="attach" data-tooltip="Pripni ponudbo: dodaj datoteko PDF ali sliko k predlogu." aria-label="Pripni ponudbo" data-busy-sensitive ${disabledAttr}>
+          ${icon("paperclip")}
+        </button>
+      </div>
+      <span class="command-divider" aria-hidden="true"></span>
+      <div class="command-section" role="group" aria-label="Izvoz">
+        <button class="button toolbar-button toolbar-button-primary" type="button" data-action="download" data-tooltip="Prenesi PDF: shrani predlog in prenese končni dokument." aria-label="Prenesi PDF" data-busy-sensitive ${disabledAttr}>
+          ${icon("download")}
+        </button>
+        <button class="button toolbar-button" type="button" data-action="print" data-tooltip="Natisni: pripravi dokument PDF in odpre tiskanje. Bližnjica: Ctrl/Cmd+P." aria-label="Natisni" data-busy-sensitive ${disabledAttr}>
+          ${icon("printer")}
+        </button>
       </div>
     </nav>
   `;
@@ -937,44 +1043,25 @@ function renderMaterialIssue() {
   const validation = state.materialValidation;
 
   root.innerHTML = `
-    <main class="app-shell material-issue-shell">
-      <header class="toolbar">
-        <div class="brand">
-          <div class="brand-mark">${icon("clipboard-list")}</div>
-          <div class="brand-copy">
-            <div class="brand-title">Izdajnica materiala</div>
-            <div class="brand-subtitle">
-              <span class="save-state-pill save-state-${escapeHtml(saveState.kind)}">${escapeHtml(saveState.label)}</span>
-              <span>${escapeHtml(saveState.detail)}</span>
+    <main class="app-shell evidence-shell material-issue-shell evidence-materialIssue">
+      <div class="app-topbar">
+        <header class="toolbar">
+          <div class="brand">
+            <div class="brand-mark">${icon("folders")}</div>
+            <div class="brand-copy">
+              <div class="brand-title">Center Rog evidence</div>
+              <div class="brand-subtitle">
+                <span class="save-state-pill save-state-${escapeHtml(saveState.kind)}">${escapeHtml(saveState.label)}</span>
+                <span>${escapeHtml(saveState.detail)}</span>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div class="toolbar-controls">
-          <nav class="toolbar-actions command-bar" aria-label="Ukazi izdajnice">
-            <div class="command-section" role="group" aria-label="Dokument">
-              <button class="button toolbar-button" type="button" data-action="new" data-tooltip="Nova izdajnica. Bližnjica: Ctrl/Cmd+N." aria-label="Nova izdajnica" data-busy-sensitive ${disabledAttr}>
-                ${icon("file-plus-2")}
-              </button>
-              <button class="button toolbar-button" type="button" data-action="save" data-tooltip="${escapeHtml(saveState.saveLabel)}. Nepopolno izdajnico lahko shraniš kot osnutek. Bližnjica: Ctrl/Cmd+S." aria-label="${escapeHtml(saveState.saveLabel)}" data-busy-sensitive ${disabledAttr}>
-                ${icon("save")}
-              </button>
-            </div>
-            <span class="command-divider" aria-hidden="true"></span>
-            <div class="command-section" role="group" aria-label="Izvoz">
-              <button class="button toolbar-button toolbar-button-primary" type="button" data-action="download" data-tooltip="Prenesi izdajnico v formatu PDF. Pred izvozom morajo biti izpolnjena vsa obvezna polja." aria-label="Prenesi PDF" data-busy-sensitive ${disabledAttr}>
-                ${icon("download")}
-              </button>
-              <button class="button toolbar-button" type="button" data-action="print" data-tooltip="Natisni izdajnico A4. Status se spremeni v Natisnjeno. Bližnjica: Ctrl/Cmd+P." aria-label="Natisni izdajnico" data-busy-sensitive ${disabledAttr}>
-                ${icon("printer")}
-              </button>
-            </div>
-          </nav>
-          ${renderEvidenceSwitcher("materialIssue", disabledAttr)}
-        </div>
-      </header>
+        </header>
+        ${renderEvidenceTabs("materialIssue", disabledAttr)}
+      </div>
 
-      <section class="workspace material-issue-workspace">
+      <section class="workspace material-issue-workspace" id="evidence-workspace">
         <div class="document-stage">
           <div class="material-issue-paper-frame">
             <article class="paper material-issue-paper" aria-label="Izdajnica materiala">
@@ -1172,6 +1259,8 @@ function renderMaterialIssue() {
             </button>
           </div>
 
+          ${renderDocumentCommands("materialIssue", saveState, disabledAttr)}
+
           <section class="panel">
             <div class="panel-header">
               <span class="panel-icon">${icon("route")}</span>
@@ -1289,50 +1378,25 @@ function render() {
   const dropzoneHint = "Datoteka PDF ali slika (PNG, JPG, WEBP ...), lahko pa klikneš za izbor.";
 
   root.innerHTML = `
-    <main class="app-shell">
-      <header class="toolbar">
-        <div class="brand">
-          <div class="brand-mark">${icon("file-text")}</div>
-          <div class="brand-copy">
-            <div class="brand-title">Predlog nakupa drobnega materiala</div>
-            <div class="brand-subtitle">
-              <span class="save-state-pill save-state-${escapeHtml(saveState.kind)}">${escapeHtml(saveState.label)}</span>
-              <span>${escapeHtml(saveState.detail)}</span>
+    <main class="app-shell evidence-shell evidence-proposal">
+      <div class="app-topbar">
+        <header class="toolbar">
+          <div class="brand">
+            <div class="brand-mark">${icon("folders")}</div>
+            <div class="brand-copy">
+              <div class="brand-title">Center Rog evidence</div>
+              <div class="brand-subtitle">
+                <span class="save-state-pill save-state-${escapeHtml(saveState.kind)}">${escapeHtml(saveState.label)}</span>
+                <span>${escapeHtml(saveState.detail)}</span>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div class="toolbar-controls">
-          <nav class="toolbar-actions command-bar" aria-label="Ukazi dokumenta">
-            <div class="command-section" role="group" aria-label="Dokument">
-              <button class="button toolbar-button" type="button" data-action="new" data-tooltip="Nov dokument: odpre svež predlog in ohrani zadnje uporabljene pametne podatke. Bližnjica: Ctrl/Cmd+N." aria-label="Nov dokument" data-busy-sensitive ${disabledAttr}>
-                ${icon("file-plus-2")} <span class="toolbar-button-label">Nov dokument</span>
-              </button>
-              <button class="button toolbar-button" type="button" data-action="save" data-tooltip="${escapeHtml(saveState.saveLabel)}: shrani predlog in mu po potrebi dodeli interno številko. Bližnjica: Ctrl/Cmd+S." aria-label="${escapeHtml(saveState.saveLabel)}" data-busy-sensitive ${disabledAttr}>
-                ${icon("save")} <span class="toolbar-button-label">${escapeHtml(saveState.saveLabel)}</span>
-              </button>
-            </div>
-            <span class="command-divider" aria-hidden="true"></span>
-            <div class="command-section" role="group" aria-label="Priloga">
-              <button class="button toolbar-button" type="button" data-action="attach" data-tooltip="Pripni ponudbo: dodaj datoteko PDF ali sliko k predlogu." aria-label="Pripni ponudbo" data-busy-sensitive ${disabledAttr}>
-                ${icon("paperclip")} <span class="toolbar-button-label">Pripni ponudbo</span>
-              </button>
-            </div>
-            <span class="command-divider" aria-hidden="true"></span>
-            <div class="command-section" role="group" aria-label="Izvoz">
-              <button class="button toolbar-button toolbar-button-primary" type="button" data-action="download" data-tooltip="Prenesi PDF: shrani predlog in prenese končni dokument." aria-label="Prenesi PDF" data-busy-sensitive ${disabledAttr}>
-                ${icon("download")} <span class="toolbar-button-label">Prenesi PDF</span>
-              </button>
-              <button class="button toolbar-button" type="button" data-action="print" data-tooltip="Natisni: pripravi dokument PDF in odpre tiskanje. Bližnjica: Ctrl/Cmd+P." aria-label="Natisni" data-busy-sensitive ${disabledAttr}>
-                ${icon("printer")} <span class="toolbar-button-label">Natisni</span>
-              </button>
-            </div>
-          </nav>
-          ${renderEvidenceSwitcher("proposal", disabledAttr)}
-        </div>
-      </header>
+        </header>
+        ${renderEvidenceTabs("proposal", disabledAttr)}
+      </div>
 
-      <section class="workspace">
+      <section class="workspace" id="evidence-workspace">
         <div class="document-stage">
           <div class="paper-frame" style="${documentLayoutCssVariables()}">
             <article class="paper" aria-label="Predlog nakupa drobnega materiala">
@@ -1442,6 +1506,7 @@ function render() {
               ${icon("x")}
             </button>
           </div>
+          ${renderDocumentCommands("proposal", saveState, disabledAttr)}
           <section class="panel">
             <div class="panel-header">
               <span class="panel-icon">${icon("paperclip")}</span>
@@ -1754,6 +1819,7 @@ function bindEvents() {
   document.getElementById("signatureInput")?.addEventListener("change", handleSignatureSelected);
   bindSignatureEvents();
   bindOfferDropzone();
+  bindEvidenceNavigationEvents();
   bindOnboardingEvents();
 
   if (!outsideClickBound) {
@@ -1836,6 +1902,54 @@ function bindMaterialIssueEvents() {
   document.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => handleAction(button.dataset.action));
   });
+  bindEvidenceNavigationEvents();
+}
+
+function bindEvidenceNavigationEvents() {
+  document.querySelectorAll("[data-evidence-target]").forEach((button) => {
+    button.addEventListener("click", () => {
+      void selectEvidence(button.dataset.evidenceTarget);
+    });
+  });
+
+  document.querySelectorAll("[data-evidence-tab]").forEach((tab) => {
+    tab.addEventListener("keydown", handleEvidenceTabKeydown);
+  });
+
+  document.querySelector("[data-evidence-menu-toggle]")?.addEventListener("click", () => {
+    state.evidenceMenuOpen = !state.evidenceMenuOpen;
+    render();
+    if (state.evidenceMenuOpen) {
+      window.setTimeout(() => {
+        document.querySelector(".evidence-menu-option.is-active")?.focus();
+      }, 0);
+    }
+  });
+}
+
+function handleEvidenceTabKeydown(event) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  const tabs = [...document.querySelectorAll(".evidence-tabs-desktop [data-evidence-tab]")];
+  if (!tabs.length) return;
+
+  event.preventDefault();
+  const currentIndex = Math.max(0, tabs.indexOf(event.currentTarget));
+  let nextIndex = currentIndex;
+  if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+  if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % tabs.length;
+  if (event.key === "Home") nextIndex = 0;
+  if (event.key === "End") nextIndex = tabs.length - 1;
+  tabs[nextIndex]?.focus();
+}
+
+async function selectEvidence(target) {
+  if (!EVIDENCE_TABS.some((tab) => tab.type === target)) return;
+  state.evidenceMenuOpen = false;
+  if (target === state.documentType) {
+    render();
+    return;
+  }
+  await switchDocumentType({ target });
 }
 
 function bindSignatureEvents() {
@@ -2070,6 +2184,13 @@ function handleOnboardingAction(action) {
 
 function handleKeyboardShortcut(event) {
   if (event.defaultPrevented || event.repeat || event.isComposing) return;
+  if (event.key === "Escape" && state.evidenceMenuOpen) {
+    event.preventDefault();
+    state.evidenceMenuOpen = false;
+    render();
+    window.setTimeout(() => document.querySelector("[data-evidence-menu-toggle]")?.focus(), 0);
+    return;
+  }
   if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
 
   const action = KEYBOARD_SHORTCUTS[event.key.toLowerCase()];
@@ -2311,6 +2432,10 @@ function positionOnboardingTooltip(options = {}) {
 }
 
 function closeSuggestionsOnOutsideClick(event) {
+  if (state.evidenceMenuOpen && !event.target.closest(".evidence-tabs-compact")) {
+    state.evidenceMenuOpen = false;
+    render();
+  }
   if (!event.target.closest(".document-popover") && !event.target.closest("[data-load-id]")) {
     closeDocumentPopover();
   }
@@ -2540,8 +2665,6 @@ async function handleAction(action) {
       } else {
         await exportPdf("print");
       }
-    } else if (action === "switch-document") {
-      await switchDocumentType();
     } else if (action === "add-material-row") {
       addMaterialRow();
     } else if (action === "open-history") {
@@ -2871,7 +2994,30 @@ async function switchDocumentType({ skipUnsavedGuard = false, target = "" } = {}
     return;
   }
 
+  if (nextType === "proposal") {
+    const latestProposal = sortRecent(state.proposals)[0];
+    if (latestProposal) {
+      state.current = { ...latestProposal };
+      state.attachment = await getAttachment(latestProposal.offerAttachmentId);
+      state.persistedAttachmentId = latestProposal.offerAttachmentId || "";
+    } else {
+      state.current = createBlankProposal();
+      state.attachment = null;
+      state.persistedAttachmentId = "";
+    }
+  } else {
+    const latestIssue = sortRecent(state.materialIssues)[0];
+    const latestProposal = sortRecent(state.proposals)[0];
+    state.currentMaterialIssue = latestIssue
+      ? {
+          ...latestIssue,
+          items: (latestIssue.items || []).map((row) => ({ ...row }))
+        }
+      : createBlankMaterialIssue(null, latestProposal);
+  }
+
   state.documentType = nextType;
+  state.evidenceMenuOpen = false;
   state.toolsPanelOpen = false;
   state.historyModalOpen = false;
   state.statusMenu = null;
@@ -2879,10 +3025,7 @@ async function switchDocumentType({ skipUnsavedGuard = false, target = "" } = {}
   clearDirty();
   clearValidation();
   clearMaterialValidation();
-  document.title =
-    nextType === "materialIssue"
-      ? "Izdajnica materiala"
-      : "Predlog nakupa drobnega materiala";
+  document.title = "Center Rog evidence";
   render();
 }
 
@@ -3235,6 +3378,7 @@ async function init() {
   state.currentMaterialIssue = createBlankMaterialIssue(state.materialIssues[0], last);
   state.attachment = null;
   state.persistedAttachmentId = "";
+  document.title = "Center Rog evidence";
   openOnboardingIfNeeded();
   document.addEventListener("keydown", handleKeyboardShortcut);
   document.addEventListener("pointerover", handleToolbarTooltipFirstShow);
