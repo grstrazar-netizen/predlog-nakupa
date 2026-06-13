@@ -1,8 +1,9 @@
 const DB_NAME = "predlog-nakupa-db";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORES = {
   proposals: "proposals",
   materialIssues: "materialIssues",
+  attendanceSheets: "attendanceSheets",
   attachments: "attachments",
   assets: "assets"
 };
@@ -44,6 +45,12 @@ export function openDatabase() {
         const store = db.createObjectStore(STORES.materialIssues, { keyPath: "id" });
         store.createIndex("serial", "serial", { unique: true });
         store.createIndex("year", "year", { unique: false });
+        store.createIndex("updatedAt", "updatedAt", { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains(STORES.attendanceSheets)) {
+        const store = db.createObjectStore(STORES.attendanceSheets, { keyPath: "id" });
+        store.createIndex("eventDate", "eventDate", { unique: false });
         store.createIndex("updatedAt", "updatedAt", { unique: false });
       }
 
@@ -97,6 +104,38 @@ export async function deleteMaterialIssue(id) {
   const db = await openDatabase();
   const tx = db.transaction(STORES.materialIssues, "readwrite");
   tx.objectStore(STORES.materialIssues).delete(id);
+  await transactionDone(tx);
+}
+
+export async function getAllAttendanceSheets() {
+  const db = await openDatabase();
+  return requestToPromise(
+    db.transaction(STORES.attendanceSheets).objectStore(STORES.attendanceSheets).getAll()
+  );
+}
+
+export async function saveAttendanceSheet(sheet) {
+  const db = await openDatabase();
+  const tx = db.transaction(STORES.attendanceSheets, "readwrite");
+  tx.objectStore(STORES.attendanceSheets).put(sheet);
+  await transactionDone(tx);
+  return sheet;
+}
+
+export async function saveAttendanceSheets(sheets) {
+  const db = await openDatabase();
+  const tx = db.transaction(STORES.attendanceSheets, "readwrite");
+  const store = tx.objectStore(STORES.attendanceSheets);
+  sheets.forEach((sheet) => store.put(sheet));
+  await transactionDone(tx);
+  return sheets;
+}
+
+export async function deleteAttendanceSheet(id) {
+  if (!id) return;
+  const db = await openDatabase();
+  const tx = db.transaction(STORES.attendanceSheets, "readwrite");
+  tx.objectStore(STORES.attendanceSheets).delete(id);
   await transactionDone(tx);
 }
 

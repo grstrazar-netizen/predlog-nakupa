@@ -1,4 +1,4 @@
-const CACHE_NAME = "predlog-nakupa-v56";
+const CACHE_NAME = "predlog-nakupa-v70";
 const CACHE_PREFIX = "predlog-nakupa-";
 const IS_LOCAL_DEV = ["localhost", "127.0.0.1", "::1"].includes(self.location.hostname);
 const ASSETS = [
@@ -10,6 +10,8 @@ const ASSETS = [
   "/src/document-layout.js",
   "/src/material-issue.js",
   "/src/material-issue-pdf.js",
+  "/src/attendance-sheet.js",
+  "/src/attendance-sheet-pdf.js",
   "/src/utils.js",
   "/src/styles.css",
   "/manifest.webmanifest",

@@ -6,6 +6,7 @@ import {
   downloadBlob,
   extractEuroTotalCents,
   formatCurrency,
+  formatSlovenianDate,
   generateId,
   normalizeSignaturePlacement,
   normalizeLabCode,
@@ -22,18 +23,41 @@ import {
 import {
   deleteOrphanAttachments,
   deleteAsset,
+  deleteAttendanceSheet,
+  getAllAttendanceSheets,
   getAllMaterialIssues,
   getAsset,
   deleteProposalBundle,
   getAllProposals,
   getAttachment,
   saveAsset,
+  saveAttendanceSheet as persistAttendanceSheet,
+  saveAttendanceSheets as persistAttendanceSheets,
   saveMaterialIssue as persistMaterialIssue,
   saveProposal,
   saveProposalBundle
 } from "./db.js";
 import { createCombinedPdfBlob, createProposalPdfBlob } from "./pdf.js";
 import { createMaterialIssuePdfBlob } from "./material-issue-pdf.js";
+import { createAttendanceSheetPdfBlob } from "./attendance-sheet-pdf.js";
+import {
+  ATTENDANCE_CATEGORY_ASSET_ID,
+  ATTENDANCE_ROWS_PER_PAGE,
+  DEFAULT_ATTENDANCE_CATEGORIES,
+  attendanceSheetFromImportGroup,
+  attendanceSheetWithSaveMetadata,
+  attendanceStatistics,
+  attendanceSuggestions,
+  createAttendanceParticipant,
+  createBlankAttendanceSheet,
+  createCustomAttendanceCategory,
+  normalizeAttendanceCategories,
+  normalizePhotoConsent,
+  parseWagtailAttendanceCsv,
+  photoConsentLabel,
+  searchAttendance,
+  validateAttendanceSheet
+} from "./attendance-sheet.js";
 import {
   MATERIAL_ISSUE_STATUSES,
   MATERIAL_UNITS,
@@ -68,6 +92,16 @@ const state = {
   current: createBlankProposal(),
   materialIssues: [],
   currentMaterialIssue: createBlankMaterialIssue(),
+  attendanceSheets: [],
+  currentAttendanceSheet: createBlankAttendanceSheet(),
+  attendanceCategories: normalizeAttendanceCategories(),
+  attendanceImport: null,
+  attendanceArchiveOpen: false,
+  attendanceArchiveTab: "search",
+  attendanceSearchQuery: "",
+  attendanceCategoryModalOpen: false,
+  attendanceDeleteConfirmId: "",
+  attendanceExportPrompt: null,
   attachment: null,
   persistedAttachmentId: "",
   signatureAsset: null,
@@ -98,6 +132,11 @@ const state = {
     fields: {},
     firstInvalidField: ""
   },
+  attendanceValidation: {
+    message: "",
+    fields: {},
+    firstInvalidField: ""
+  },
   toast: ""
 };
 
@@ -112,6 +151,7 @@ let recentDeleteDrag = null;
 let toolbarTooltipDelayArmed = false;
 let suppressedRecentClickId = "";
 let beforeUnloadBound = false;
+let pendingAttendanceFile = null;
 const ONBOARDING_STORAGE_KEY = "predlog-nakupa:onboarding-complete:v1";
 const DOCUMENT_POPOVER_HOVER_DELAY_MS = 1000;
 const RECENT_DELETE_DRAG_DISTANCE = 92;
@@ -678,6 +718,34 @@ function materialIssueSaveState() {
   };
 }
 
+function attendanceSaveState() {
+  const sheet = state.currentAttendanceSheet;
+  if (!sheet.id) {
+    return {
+      kind: "unsaved",
+      label: "Ni shranjeno",
+      detail: sheet.programName ? `Program: ${sheet.programName}` : "Nov podpisni list",
+      saveLabel: "Shrani podpisni list"
+    };
+  }
+
+  if (state.dirty) {
+    return {
+      kind: "dirty",
+      label: "Neshranjene spremembe",
+      detail: `${sheet.programName} · ${formatSlovenianDate(sheet.eventDate)}`,
+      saveLabel: "Shrani spremembe"
+    };
+  }
+
+  return {
+    kind: "saved",
+    label: "Shranjeno",
+    detail: `${sheet.programName} · ${formatSlovenianDate(sheet.eventDate)}`,
+    saveLabel: "Shrani"
+  };
+}
+
 function materialValidationError(fieldName) {
   return state.materialValidation.fields?.[fieldName] || "";
 }
@@ -696,6 +764,27 @@ function renderMaterialError(fieldName) {
   const message = materialValidationError(fieldName);
   return message
     ? `<span class="field-error material-field-error" id="material-error-${escapeHtml(fieldName)}">${escapeHtml(message)}</span>`
+    : "";
+}
+
+function attendanceValidationError(fieldName) {
+  return state.attendanceValidation.fields?.[fieldName] || "";
+}
+
+function attendanceValidationAttrs(fieldName) {
+  const message = attendanceValidationError(fieldName);
+  if (!message) return "";
+  return `aria-invalid="true" aria-describedby="attendance-error-${escapeHtml(fieldName)}"`;
+}
+
+function attendanceValidationClass(baseClass, fieldName) {
+  return `${baseClass}${attendanceValidationError(fieldName) ? " is-invalid" : ""}`;
+}
+
+function renderAttendanceError(fieldName) {
+  const message = attendanceValidationError(fieldName);
+  return message
+    ? `<span class="field-error attendance-field-error" id="attendance-error-${escapeHtml(fieldName)}">${escapeHtml(message)}</span>`
     : "";
 }
 
@@ -725,7 +814,11 @@ function setDirtyState(isDirty) {
 
 function syncSaveStateIndicator() {
   const saveState =
-    state.documentType === "materialIssue" ? materialIssueSaveState() : documentSaveState();
+    state.documentType === "materialIssue"
+      ? materialIssueSaveState()
+      : state.documentType === "attendance"
+        ? attendanceSaveState()
+        : documentSaveState();
   const pill = document.querySelector(".save-state-pill");
   if (pill) {
     pill.className = `save-state-pill save-state-${saveState.kind}`;
@@ -907,6 +1000,11 @@ const EVIDENCE_TABS = [
     type: "materialIssue",
     label: "Izdajnice materiala",
     icon: "clipboard-list"
+  },
+  {
+    type: "attendance",
+    label: "Podpisni listi",
+    icon: "list-checks"
   }
 ];
 
@@ -981,6 +1079,36 @@ function renderEvidenceTabs(activeType, disabledAttr = "") {
 }
 
 function renderDocumentCommands(type, saveState, disabledAttr = "") {
+  if (type === "attendance") {
+    return `
+      <nav class="toolbar-actions command-bar side-command-bar" aria-label="Ukazi podpisnega lista">
+        <div class="command-section" role="group" aria-label="Dokument">
+          <button class="button toolbar-button" type="button" data-action="new" data-tooltip="Nov podpisni list. Bližnjica: Ctrl/Cmd+N." aria-label="Nov podpisni list" data-busy-sensitive ${disabledAttr}>
+            ${icon("file-plus-2")}
+          </button>
+          <button class="button toolbar-button" type="button" data-action="save" data-tooltip="${escapeHtml(saveState.saveLabel)}. Bližnjica: Ctrl/Cmd+S." aria-label="${escapeHtml(saveState.saveLabel)}" data-busy-sensitive ${disabledAttr}>
+            ${icon("save")}
+          </button>
+        </div>
+        <span class="command-divider" aria-hidden="true"></span>
+        <div class="command-section" role="group" aria-label="Uvoz">
+          <button class="button toolbar-button" type="button" data-action="import-attendance" data-tooltip="Uvozi Wagtail CSV in pripravi podpisne liste po terminih." aria-label="Uvozi CSV" data-busy-sensitive ${disabledAttr}>
+            ${icon("file-up")}
+          </button>
+        </div>
+        <span class="command-divider" aria-hidden="true"></span>
+        <div class="command-section" role="group" aria-label="Izvoz">
+          <button class="button toolbar-button toolbar-button-primary" type="button" data-action="download" data-tooltip="Prenesi podpisni list v obliki PDF." aria-label="Prenesi PDF" data-busy-sensitive ${disabledAttr}>
+            ${icon("download")}
+          </button>
+          <button class="button toolbar-button" type="button" data-action="print" data-tooltip="Natisni podpisni list A4. Bližnjica: Ctrl/Cmd+P." aria-label="Natisni podpisni list" data-busy-sensitive ${disabledAttr}>
+            ${icon("printer")}
+          </button>
+        </div>
+      </nav>
+    `;
+  }
+
   if (type === "materialIssue") {
     return `
       <nav class="toolbar-actions command-bar side-command-bar" aria-label="Ukazi izdajnice">
@@ -1070,8 +1198,8 @@ function renderMaterialIssue() {
                 <div class="material-issue-heading">
                   <span class="material-issue-kicker">CENTER ROG</span>
                   <h1>IZDAJNICA MATERIALA</h1>
-                  <span class="material-issue-number">${escapeHtml(issue.serial || "OSNUTEK")}</span>
                 </div>
+                <span class="material-issue-number">${escapeHtml(issue.serial || "OSNUTEK")}</span>
               </header>
 
               ${
@@ -1355,7 +1483,629 @@ function renderMaterialIssue() {
   renderToast();
 }
 
+function visibleAttendanceCategories(selectedId = "") {
+  return state.attendanceCategories.filter((category) => !category.hidden || category.id === selectedId);
+}
+
+function attendanceCategoryOptions(selectedId = "") {
+  return visibleAttendanceCategories(selectedId)
+    .map(
+      (category) =>
+        `<option value="${escapeHtml(category.id)}" ${category.id === selectedId ? "selected" : ""}>${escapeHtml(category.label)}</option>`
+    )
+    .join("");
+}
+
+function attendanceCategoryLabel(categoryId) {
+  return state.attendanceCategories.find((category) => category.id === categoryId)?.label || "Brez kategorije";
+}
+
+function attendanceParticipantMarkup(participant, displayIndex) {
+  const prefix = `participants.${participant.id}`;
+  return `
+    <tr data-attendance-participant-row="${escapeHtml(participant.id)}">
+      <td class="attendance-index-cell">${displayIndex}</td>
+      <td>
+        <input
+          class="${attendanceValidationClass("attendance-cell-input", `${prefix}.firstName`)}"
+          data-attendance-participant-field="firstName"
+          data-attendance-participant-id="${escapeHtml(participant.id)}"
+          value="${escapeHtml(participant.firstName)}"
+          aria-label="Ime udeleženca ${displayIndex}"
+          ${attendanceValidationAttrs(`${prefix}.firstName`)}
+        />
+        ${renderAttendanceError(`${prefix}.firstName`)}
+      </td>
+      <td>
+        <input
+          class="${attendanceValidationClass("attendance-cell-input", `${prefix}.lastName`)}"
+          data-attendance-participant-field="lastName"
+          data-attendance-participant-id="${escapeHtml(participant.id)}"
+          value="${escapeHtml(participant.lastName)}"
+          aria-label="Priimek udeleženca ${displayIndex}"
+          ${attendanceValidationAttrs(`${prefix}.lastName`)}
+        />
+        ${renderAttendanceError(`${prefix}.lastName`)}
+      </td>
+      <td class="${participant.duplicateEmail ? "attendance-duplicate-cell" : ""}">
+        <input
+          class="${attendanceValidationClass("attendance-cell-input", `${prefix}.email`)}"
+          data-attendance-participant-field="email"
+          data-attendance-participant-id="${escapeHtml(participant.id)}"
+          value="${escapeHtml(participant.email)}"
+          inputmode="email"
+          aria-label="E-pošta udeleženca ${displayIndex}"
+          ${attendanceValidationAttrs(`${prefix}.email`)}
+        />
+        ${participant.duplicateEmail ? `<span class="attendance-duplicate-hint">${icon("copy")} Podvojen naslov</span>` : ""}
+        ${renderAttendanceError(`${prefix}.email`)}
+      </td>
+      <td class="attendance-signature-cell">
+      </td>
+      <td class="attendance-photo-consent-cell">
+        <div class="attendance-photo-consent-controls">
+          <select
+            class="${attendanceValidationClass("attendance-photo-consent-select", `${prefix}.photoConsent`)}"
+            data-attendance-participant-field="photoConsent"
+            data-attendance-participant-id="${escapeHtml(participant.id)}"
+            aria-label="Soglasje za fotografiranje udeleženca ${displayIndex}"
+            title="Soglasje za fotografiranje"
+            ${attendanceValidationAttrs(`${prefix}.photoConsent`)}
+          >
+            <option value="" ${participant.photoConsent === null ? "selected" : ""}>—</option>
+            <option value="yes" ${participant.photoConsent === true ? "selected" : ""}>DA</option>
+            <option value="no" ${participant.photoConsent === false ? "selected" : ""}>NE</option>
+          </select>
+          <button class="attendance-remove-participant" type="button" data-remove-attendance-participant="${escapeHtml(participant.id)}" aria-label="Odstrani udeleženca ${displayIndex}">
+            ${icon("trash-2")}
+          </button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderAttendancePage(sheet, participants, pageIndex, pageCount) {
+  const offset = pageIndex * ATTENDANCE_ROWS_PER_PAGE;
+  const editableHeader = pageIndex === 0;
+  const metadata = editableHeader
+    ? `
+      <div class="attendance-meta-grid">
+        <label class="attendance-meta-field attendance-meta-program">
+          <span>Naziv programa</span>
+          <span class="smart-field">
+            <input class="${attendanceValidationClass("attendance-meta-input", "programName")}" data-attendance-field="programName" data-attendance-smart-field="programName" value="${escapeHtml(sheet.programName)}" ${attendanceValidationAttrs("programName")} />
+            ${renderAttendanceError("programName")}
+          </span>
+        </label>
+        <label class="attendance-meta-field">
+          <span>Kategorija</span>
+          <select class="${attendanceValidationClass("attendance-meta-input", "categoryId")}" data-attendance-field="categoryId" ${attendanceValidationAttrs("categoryId")}>
+            ${attendanceCategoryOptions(sheet.categoryId)}
+          </select>
+          ${renderAttendanceError("categoryId")}
+        </label>
+        <label class="attendance-meta-field">
+          <span>Datum</span>
+          <input class="${attendanceValidationClass("attendance-meta-input", "eventDate")}" data-attendance-field="eventDate" type="date" value="${escapeHtml(sheet.eventDate)}" ${attendanceValidationAttrs("eventDate")} />
+          ${renderAttendanceError("eventDate")}
+        </label>
+        <label class="attendance-meta-field">
+          <span>Ura</span>
+          <input class="${attendanceValidationClass("attendance-meta-input", "eventTime")}" data-attendance-field="eventTime" type="time" value="${escapeHtml(sheet.eventTime)}" ${attendanceValidationAttrs("eventTime")} />
+          ${renderAttendanceError("eventTime")}
+        </label>
+        <label class="attendance-meta-field">
+          <span>Odgovorni mentor</span>
+          <span class="smart-field">
+            <input class="${attendanceValidationClass("attendance-meta-input", "mentorName")}" data-attendance-field="mentorName" data-attendance-smart-field="mentorName" value="${escapeHtml(sheet.mentorName)}" ${attendanceValidationAttrs("mentorName")} />
+            ${renderAttendanceError("mentorName")}
+          </span>
+        </label>
+        <label class="attendance-meta-field">
+          <span>Lab</span>
+          <span class="smart-field">
+            <input class="${attendanceValidationClass("attendance-meta-input", "labName")}" data-attendance-field="labName" data-attendance-smart-field="labName" value="${escapeHtml(sheet.labName)}" ${attendanceValidationAttrs("labName")} />
+            ${renderAttendanceError("labName")}
+          </span>
+        </label>
+        <label class="attendance-meta-field attendance-meta-location">
+          <span>Lokacija</span>
+          <span class="smart-field">
+            <input class="${attendanceValidationClass("attendance-meta-input", "location")}" data-attendance-field="location" data-attendance-smart-field="location" value="${escapeHtml(sheet.location)}" ${attendanceValidationAttrs("location")} />
+            ${renderAttendanceError("location")}
+          </span>
+        </label>
+      </div>
+    `
+    : `
+      <div class="attendance-meta-grid attendance-meta-static">
+        <span class="attendance-meta-field attendance-meta-program"><small>Naziv programa</small><strong>${escapeHtml(sheet.programName)}</strong></span>
+        <span class="attendance-meta-field"><small>Kategorija</small><strong>${escapeHtml(attendanceCategoryLabel(sheet.categoryId))}</strong></span>
+        <span class="attendance-meta-field"><small>Datum</small><strong>${escapeHtml(formatSlovenianDate(sheet.eventDate))}</strong></span>
+        <span class="attendance-meta-field"><small>Ura</small><strong>${escapeHtml(sheet.eventTime)}</strong></span>
+        <span class="attendance-meta-field"><small>Odgovorni mentor</small><strong>${escapeHtml(sheet.mentorName)}</strong></span>
+        <span class="attendance-meta-field"><small>Lab</small><strong>${escapeHtml(sheet.labName)}</strong></span>
+        <span class="attendance-meta-field attendance-meta-location"><small>Lokacija</small><strong>${escapeHtml(sheet.location)}</strong></span>
+      </div>
+    `;
+
+  return `
+    <article class="paper attendance-paper" aria-label="Podpisni list udeležencev, stran ${pageIndex + 1} od ${pageCount}">
+      <header class="attendance-header">
+        ${centerRogLogoMarkup()}
+        <h1>PODPISNI LIST UDELEŽENCEV</h1>
+        <span class="attendance-page-number">${pageIndex + 1}/${pageCount}</span>
+      </header>
+      ${
+        editableHeader && state.attendanceValidation.message
+          ? `<div class="form-error-banner attendance-error-banner" role="alert">${escapeHtml(state.attendanceValidation.message)}</div>`
+          : ""
+      }
+      ${metadata}
+      <div class="attendance-table-wrap">
+        <table class="attendance-table">
+          <colgroup>
+            <col class="attendance-col-index" />
+            <col class="attendance-col-first-name" />
+            <col class="attendance-col-last-name" />
+            <col class="attendance-col-email" />
+            <col class="attendance-col-signature" />
+            <col class="attendance-col-photo-consent" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Št.</th>
+              <th>Ime</th>
+              <th>Priimek</th>
+              <th>E-pošta</th>
+              <th>Podpis</th>
+              <th class="attendance-photo-consent-header" title="Soglasje za fotografiranje">Slikanje</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${participants.map((participant, index) => attendanceParticipantMarkup(participant, offset + index + 1)).join("")}
+            ${Array.from(
+              { length: Math.max(0, ATTENDANCE_ROWS_PER_PAGE - participants.length) },
+              (_, index) => `
+                <tr class="attendance-placeholder-row" aria-hidden="true">
+                  <td>${offset + participants.length + index + 1}</td>
+                  <td></td><td></td><td></td><td></td><td>${photoConsentLabel(null)}</td>
+                </tr>
+              `
+            ).join("")}
+          </tbody>
+        </table>
+      </div>
+      <footer class="attendance-footer">
+        <span>S podpisom potrjujem udeležbo na programu in resničnost navedenih podatkov.</span>
+        <span>Center Rog · Trubarjeva cesta 72 · 1000 Ljubljana</span>
+      </footer>
+    </article>
+  `;
+}
+
+function renderAttendanceImportModal() {
+  const attendanceImport = state.attendanceImport;
+  if (!attendanceImport) return "";
+  const defaults = attendanceImport.defaults || {};
+  const fieldError = (index, field) =>
+    attendanceImport.fieldErrors?.[`${index}.${field}`] || "";
+  const fieldClass = (index, field) =>
+    `input${fieldError(index, field) ? " is-invalid" : ""}`;
+  const fieldErrorMarkup = (index, field) => {
+    const message = fieldError(index, field);
+    return message ? `<span class="field-error">${escapeHtml(message)}</span>` : "";
+  };
+  return `
+    <div class="modal-backdrop attendance-import-backdrop" role="presentation">
+      <section class="modal-window attendance-import-modal" role="dialog" aria-modal="true" aria-labelledby="attendance-import-title" data-modal-window>
+        <header class="modal-header">
+          <div>
+            <h2 class="modal-title" id="attendance-import-title">Pregled uvoza CSV</h2>
+            <p class="modal-subtitle">${escapeHtml(attendanceImport.fileName)} · ${attendanceImport.groups.length} ${attendanceImport.groups.length === 1 ? "podpisni list" : "podpisnih listov"}</p>
+          </div>
+          <button class="button button-icon-only button-ghost" type="button" data-attendance-import-action="cancel" aria-label="Prekliči uvoz">${icon("x")}</button>
+        </header>
+        <div class="modal-body attendance-import-body">
+          ${attendanceImport.error ? `<div class="form-error-banner" role="alert">${escapeHtml(attendanceImport.error)}</div>` : ""}
+          <div class="attendance-import-groups">
+            ${attendanceImport.groups
+              .map(
+                (group, index) => `
+                  <section class="attendance-import-group">
+                    <header>
+                      <span>List ${index + 1}</span>
+                      <strong>${escapeHtml(group.programName || "Brez naziva")}</strong>
+                      <small>${escapeHtml(group.eventDate)} · ${escapeHtml(group.eventTime)} · ${group.participants.length} udeležencev</small>
+                    </header>
+                    <div class="attendance-import-fields">
+                      <label class="field-stack attendance-import-program">
+                        <span>Naziv programa <small>obvezno</small></span>
+                        <input class="${fieldClass(index, "programName")}" data-attendance-import-field="programName" data-attendance-import-index="${index}" value="${escapeHtml(group.programName)}" aria-invalid="${Boolean(fieldError(index, "programName"))}" />
+                        ${fieldErrorMarkup(index, "programName")}
+                      </label>
+                      <label class="field-stack attendance-import-category">
+                        <span>Kategorija <small>obvezno</small></span>
+                        <select class="${fieldClass(index, "categoryId")}" data-attendance-import-field="categoryId" data-attendance-import-index="${index}" aria-invalid="${Boolean(fieldError(index, "categoryId"))}">
+                          ${attendanceCategoryOptions(group.categoryId || defaults.categoryId)}
+                        </select>
+                        ${fieldErrorMarkup(index, "categoryId")}
+                      </label>
+                      <label class="field-stack attendance-import-mentor">
+                        <span>Odgovorni mentor <small>obvezno</small></span>
+                        <input class="${fieldClass(index, "mentorName")}" data-attendance-import-field="mentorName" data-attendance-import-index="${index}" value="${escapeHtml(group.mentorName || defaults.mentorName)}" aria-invalid="${Boolean(fieldError(index, "mentorName"))}" />
+                        ${fieldErrorMarkup(index, "mentorName")}
+                      </label>
+                      <label class="field-stack attendance-import-lab">
+                        <span>Lab <small>obvezno</small></span>
+                        <input class="${fieldClass(index, "labName")}" data-attendance-import-field="labName" data-attendance-import-index="${index}" value="${escapeHtml(group.labName || defaults.labName)}" aria-invalid="${Boolean(fieldError(index, "labName"))}" />
+                        ${fieldErrorMarkup(index, "labName")}
+                      </label>
+                      <label class="field-stack attendance-import-location">
+                        <span>Lokacija <small>obvezno</small></span>
+                        <input class="${fieldClass(index, "location")}" data-attendance-import-field="location" data-attendance-import-index="${index}" value="${escapeHtml(group.location || defaults.location)}" aria-invalid="${Boolean(fieldError(index, "location"))}" />
+                        ${fieldErrorMarkup(index, "location")}
+                      </label>
+                      <label class="field-stack attendance-import-date">
+                        <span>Datum <small>obvezno</small></span>
+                        <input class="${fieldClass(index, "eventDate")}" type="date" data-attendance-import-field="eventDate" data-attendance-import-index="${index}" value="${escapeHtml(group.eventDate)}" aria-invalid="${Boolean(fieldError(index, "eventDate"))}" />
+                        ${fieldErrorMarkup(index, "eventDate")}
+                      </label>
+                      <label class="field-stack attendance-import-time">
+                        <span>Ura <small>obvezno</small></span>
+                        <input class="${fieldClass(index, "eventTime")}" type="time" data-attendance-import-field="eventTime" data-attendance-import-index="${index}" value="${escapeHtml(group.eventTime)}" aria-invalid="${Boolean(fieldError(index, "eventTime"))}" />
+                        ${fieldErrorMarkup(index, "eventTime")}
+                      </label>
+                    </div>
+                  </section>
+                `
+              )
+              .join("")}
+          </div>
+          <div class="modal-actions">
+            <button class="button button-outline" type="button" data-attendance-import-action="cancel">Prekliči</button>
+            <button class="button button-solid" type="button" data-attendance-import-action="confirm">Ustvari podpisne liste</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAttendanceArchiveModal() {
+  if (!state.attendanceArchiveOpen) return "";
+  const results = searchAttendance(state.attendanceSheets, state.attendanceSearchQuery);
+  const statistics = attendanceStatistics(state.attendanceSheets, state.attendanceCategories);
+  const recentSheets = sortRecent(state.attendanceSheets);
+  return `
+    <div class="modal-backdrop attendance-archive-backdrop" data-action="close-attendance-archive" role="presentation">
+      <section class="modal-window attendance-archive-modal" role="dialog" aria-modal="true" aria-labelledby="attendance-archive-title" data-modal-window>
+        <header class="modal-header">
+          <h2 class="modal-title" id="attendance-archive-title">Udeležbe in statistika</h2>
+          <button class="button button-icon-only button-ghost" type="button" data-action="close-attendance-archive" aria-label="Zapri pregled">${icon("x")}</button>
+        </header>
+        <div class="attendance-archive-tabs" role="tablist" aria-label="Pregled udeležb">
+          <button class="${state.attendanceArchiveTab === "search" ? "is-active" : ""}" type="button" role="tab" aria-selected="${state.attendanceArchiveTab === "search"}" data-attendance-archive-tab="search">Iskanje</button>
+          <button class="${state.attendanceArchiveTab === "statistics" ? "is-active" : ""}" type="button" role="tab" aria-selected="${state.attendanceArchiveTab === "statistics"}" data-attendance-archive-tab="statistics">Statistika</button>
+        </div>
+        <div class="modal-body attendance-archive-body">
+          ${
+            state.attendanceArchiveTab === "statistics"
+              ? `
+                <div class="attendance-stat-total">
+                  <span>Potrjene udeležbe</span>
+                  <strong>${statistics.totalConfirmed}</strong>
+                </div>
+                <div class="attendance-stat-grid">
+                  <section>
+                    <h3>Po kategorijah</h3>
+                    ${statistics.byCategory.length ? statistics.byCategory.map((item) => `<div class="attendance-stat-row"><span>${escapeHtml(item.label)}</span><strong>${item.count}</strong></div>`).join("") : `<p class="empty-text">Potrjenih udeležb še ni.</p>`}
+                  </section>
+                  <section>
+                    <h3>Po programih</h3>
+                    ${statistics.byProgram.length ? statistics.byProgram.map((item) => `<div class="attendance-stat-row"><span>${escapeHtml(item.label)}</span><strong>${item.count}</strong></div>`).join("") : `<p class="empty-text">Potrjenih udeležb še ni.</p>`}
+                  </section>
+                </div>
+              `
+              : `
+                <label class="attendance-search-field">
+                  ${icon("search")}
+                  <input type="search" data-attendance-search value="${escapeHtml(state.attendanceSearchQuery)}" placeholder="Ime, priimek ali e-pošta" autofocus />
+                </label>
+                ${
+                  state.attendanceSearchQuery
+                    ? `<div class="attendance-search-results">
+                        ${results.length ? results.map((result) => `
+                          <button class="attendance-search-result" type="button" data-load-attendance-sheet-id="${escapeHtml(result.sheetId)}">
+                            <span>
+                              <strong>${escapeHtml(`${result.firstName} ${result.lastName}`)}</strong>
+                              <small>${escapeHtml(result.email)}</small>
+                            </span>
+                            <span>
+                              <strong>${escapeHtml(result.programName)}</strong>
+                              <small>${escapeHtml(formatSlovenianDate(result.eventDate))} · ${result.attended ? "Udeležba potrjena" : "Udeležba ni potrjena"}</small>
+                            </span>
+                            ${icon("chevron-right")}
+                          </button>
+                        `).join("") : `<p class="empty-text">Za ta vnos ni rezultatov.</p>`}
+                      </div>`
+                    : `<div class="attendance-sheet-archive-list">
+                        ${recentSheets.length ? recentSheets.map((sheet) => `
+                          <div class="attendance-sheet-archive-row">
+                            <button type="button" data-load-attendance-sheet-id="${escapeHtml(sheet.id)}">
+                              <span><strong>${escapeHtml(sheet.programName)}</strong><small>${escapeHtml(formatSlovenianDate(sheet.eventDate))} · ${sheet.participants.length} udeležencev</small></span>
+                              ${icon("chevron-right")}
+                            </button>
+                            <button class="button button-icon-only button-ghost" type="button" data-request-delete-attendance-id="${escapeHtml(sheet.id)}" aria-label="Izbriši podpisni list">${icon("trash-2")}</button>
+                          </div>
+                        `).join("") : `<p class="empty-text">Podpisni listi še niso shranjeni.</p>`}
+                      </div>`
+                }
+              `
+          }
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAttendanceCategoryModal() {
+  if (!state.attendanceCategoryModalOpen) return "";
+  return `
+    <div class="modal-backdrop attendance-category-backdrop" data-action="close-attendance-categories" role="presentation">
+      <section class="modal-window attendance-category-modal" role="dialog" aria-modal="true" aria-labelledby="attendance-category-title" data-modal-window>
+        <header class="modal-header">
+          <div>
+            <h2 class="modal-title" id="attendance-category-title">Kategorije programov</h2>
+            <p class="modal-subtitle">Privzete kategorije lahko skriješ, lastne pa tudi preimenuješ ali izbrišeš.</p>
+          </div>
+          <button class="button button-icon-only button-ghost" type="button" data-action="close-attendance-categories" aria-label="Zapri kategorije">${icon("x")}</button>
+        </header>
+        <div class="modal-body">
+          <div class="attendance-category-list">
+            ${state.attendanceCategories.map((category) => `
+              <div class="attendance-category-row">
+                ${
+                  category.builtIn
+                    ? `<strong>${escapeHtml(category.label)}</strong>`
+                    : `<input class="input" data-attendance-category-label="${escapeHtml(category.id)}" value="${escapeHtml(category.label)}" aria-label="Ime kategorije" />`
+                }
+                <label class="attendance-category-visible">
+                  <input type="checkbox" data-attendance-category-visible="${escapeHtml(category.id)}" ${category.hidden ? "" : "checked"} />
+                  <span>Vidna</span>
+                </label>
+                ${category.builtIn ? `<span class="attendance-category-locked">${icon("lock")} Privzeta</span>` : `<button class="button button-icon-only button-ghost" type="button" data-delete-attendance-category="${escapeHtml(category.id)}" aria-label="Izbriši kategorijo">${icon("trash-2")}</button>`}
+              </div>
+            `).join("")}
+          </div>
+          <form class="attendance-category-add" data-attendance-category-form>
+            <input class="input" name="categoryLabel" placeholder="Nova kategorija, npr. Meetup" required />
+            <button class="button button-solid" type="submit">${icon("plus")} Dodaj</button>
+          </form>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAttendanceDeleteConfirm() {
+  if (!state.attendanceDeleteConfirmId) return "";
+  const sheet = state.attendanceSheets.find((item) => item.id === state.attendanceDeleteConfirmId);
+  if (!sheet) return "";
+  return `
+    <div class="modal-backdrop attendance-delete-backdrop" data-action="cancel-delete-attendance" role="presentation">
+      <section class="modal-window delete-modal" role="dialog" aria-modal="true" aria-labelledby="attendance-delete-title" data-modal-window>
+        <header class="modal-header">
+          <h2 class="modal-title" id="attendance-delete-title">Izbrišem podpisni list?</h2>
+          <button class="button button-icon-only button-ghost" type="button" data-action="cancel-delete-attendance" aria-label="Prekliči brisanje">${icon("x")}</button>
+        </header>
+        <div class="modal-body delete-modal-body">
+          <p>Podpisni list za <strong>${escapeHtml(sheet.programName)}</strong> (${escapeHtml(formatSlovenianDate(sheet.eventDate))}) bo trajno odstranjen iz lokalnega arhiva in statistike.</p>
+          <div class="modal-actions">
+            <button class="button button-outline" type="button" data-action="cancel-delete-attendance">Prekliči</button>
+            <button class="button button-solid button-danger" type="button" data-action="confirm-delete-attendance">Izbriši podpisni list</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAttendanceExportPrompt() {
+  if (!state.attendanceExportPrompt) return "";
+  const { mode, missingCount } = state.attendanceExportPrompt;
+  const isPrint = mode === "print";
+
+  return `
+    <div class="modal-backdrop attendance-export-backdrop" data-action="cancel-attendance-export" role="presentation">
+      <section class="modal-window attendance-export-modal" role="dialog" aria-modal="true" aria-labelledby="attendance-export-title" data-modal-window>
+        <header class="modal-header">
+          <h2 class="modal-title" id="attendance-export-title">Manjkajo podatki</h2>
+          <button class="button button-icon-only button-ghost" type="button" data-action="cancel-attendance-export" aria-label="Nazaj na obrazec">${icon("x")}</button>
+        </header>
+        <div class="modal-body delete-modal-body">
+          <p>Podpisni list ni v celoti izpolnjen. Število manjkajočih obveznih polj: <strong>${missingCount}</strong>.</p>
+          <p class="attendance-export-note">Dokument lahko vseeno ${isPrint ? "natisnete" : "prenesete"} in manjkajoče podatke pozneje dopišete ročno.</p>
+          <div class="modal-actions">
+            <button class="button button-outline" type="button" data-action="cancel-attendance-export">Nazaj na obrazec</button>
+            <button class="button button-solid" type="button" data-action="confirm-attendance-export">${isPrint ? "Vseeno natisni" : "Vseeno prenesi PDF"}</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAttendanceSheet() {
+  const sheet = state.currentAttendanceSheet;
+  const saveState = attendanceSaveState();
+  const disabledAttr = state.busy ? "disabled" : "";
+  const participants = sheet.participants || [];
+  const pageCount = Math.max(
+    1,
+    Math.ceil(participants.length / ATTENDANCE_ROWS_PER_PAGE)
+  );
+  const confirmedCount = participants.filter((participant) => participant.attended).length;
+  const recentSheets = sortRecent(state.attendanceSheets).slice(0, 5);
+
+  root.innerHTML = `
+    <main class="app-shell evidence-shell attendance-shell evidence-attendance">
+      <div class="app-topbar">
+        <header class="toolbar">
+          <div class="brand">
+            <div class="brand-mark">${icon("folders")}</div>
+            <div class="brand-copy">
+              <div class="brand-title">Center Rog evidence</div>
+              <div class="brand-subtitle">
+                <span class="save-state-pill save-state-${escapeHtml(saveState.kind)}">${escapeHtml(saveState.label)}</span>
+                <span>${escapeHtml(saveState.detail)}</span>
+              </div>
+            </div>
+          </div>
+        </header>
+        ${renderEvidenceTabs("attendance", disabledAttr)}
+      </div>
+
+      <section class="workspace attendance-workspace" id="evidence-workspace">
+        <div class="document-stage attendance-document-stage">
+          <div class="attendance-pages">
+            ${Array.from(
+              { length: pageCount },
+              (_, index) =>
+                renderAttendancePage(
+                  sheet,
+                  participants.slice(
+                    index * ATTENDANCE_ROWS_PER_PAGE,
+                    index * ATTENDANCE_ROWS_PER_PAGE + ATTENDANCE_ROWS_PER_PAGE
+                  ),
+                  index,
+                  pageCount
+                )
+            ).join("")}
+            <button class="button button-outline attendance-add-participant" type="button" data-action="add-attendance-participant">${icon("user-plus")} Dodaj udeleženca</button>
+          </div>
+        </div>
+
+        <aside class="side-panel${state.toolsPanelOpen ? " is-open" : ""}" id="toolsPanel" aria-label="Pregled podpisnega lista">
+          <div class="panel-drawer-header">
+            <span>${icon("panel-right")} Pregled podpisnega lista</span>
+            <button class="button button-icon-only button-ghost" type="button" data-action="close-tools" aria-label="Zapri pregled">${icon("x")}</button>
+          </div>
+          ${renderDocumentCommands("attendance", saveState, disabledAttr)}
+
+          <section class="panel">
+            <div class="panel-header">
+              <span class="panel-icon">${icon("file-up")}</span>
+              <span class="panel-title">Uvoz udeležencev</span>
+            </div>
+            <div class="panel-body">
+              <p class="empty-text">${sheet.sourceFileName ? `Uvoženo iz: ${escapeHtml(sheet.sourceFileName)}` : "Naloži Wagtail CSV. Če vsebuje več terminov, bo aplikacija pripravila več podpisnih listov."}</p>
+              <button class="attendance-dropzone${state.busy ? " is-disabled" : ""}" type="button" data-action="import-attendance" data-attendance-dropzone data-busy-sensitive ${disabledAttr}>
+                <span>${icon("upload")} Povleci CSV sem</span>
+                <small>ali klikni za izbor datoteke</small>
+              </button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <span class="panel-icon">${icon("user-check")}</span>
+              <span class="panel-title">Udeležba</span>
+            </div>
+            <div class="panel-body">
+              <div class="attendance-counts">
+                <span><small>Uvoženi</small><strong>${participants.length}</strong></span>
+                <span><small>Potrjeni</small><strong>${confirmedCount}</strong></span>
+              </div>
+              ${
+                participants.length
+                  ? `<label class="attendance-confirm-all">
+                      <input
+                        type="checkbox"
+                        data-attendance-confirm-all
+                        ${confirmedCount === participants.length ? "checked" : ""}
+                        data-partially-checked="${confirmedCount > 0 && confirmedCount < participants.length ? "true" : "false"}"
+                      />
+                      <span>Označi vse</span>
+                    </label>
+                    <div class="attendance-confirm-list">
+                      ${participants.map((participant) => `
+                        <label>
+                          <input type="checkbox" data-attendance-confirm="${escapeHtml(participant.id)}" ${participant.attended ? "checked" : ""} />
+                          <span><strong>${escapeHtml(`${participant.firstName} ${participant.lastName}`.trim() || "Brez imena")}</strong><small>${escapeHtml(participant.email)}</small></span>
+                        </label>
+                      `).join("")}
+                    </div>`
+                  : `<p class="empty-text">Po uvozu ali ročnem vnosu lahko tu potrdiš dejansko udeležbo.</p>`
+              }
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <span class="panel-icon">${icon("search")}</span>
+              <span class="panel-title">Iskanje in statistika</span>
+            </div>
+            <div class="panel-body">
+              <button class="attendance-search-launch" type="button" data-action="open-attendance-archive">
+                ${icon("search")} Preveri osebo ali odpri statistiko
+              </button>
+              <div class="separator"></div>
+              <div class="history-head"><span>Zadnji podpisni listi</span></div>
+              ${
+                recentSheets.length
+                  ? `<div class="attendance-recent-list">
+                      ${recentSheets.map((savedSheet) => `
+                        <button type="button" data-load-attendance-sheet-id="${escapeHtml(savedSheet.id)}">
+                          <span><strong>${escapeHtml(savedSheet.programName)}</strong><small>${escapeHtml(formatSlovenianDate(savedSheet.eventDate))} · ${savedSheet.participants.length} udeležencev</small></span>
+                          ${icon("chevron-right")}
+                        </button>
+                      `).join("")}
+                    </div>`
+                  : `<p class="empty-text">Shranjeni podpisni listi se bodo pokazali tukaj.</p>`
+              }
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <span class="panel-icon">${icon("tags")}</span>
+              <span class="panel-title">Kategorije programov</span>
+            </div>
+            <div class="panel-body">
+              <div class="settings-summary-row">
+                <span>Trenutna kategorija</span>
+                <strong>${escapeHtml(attendanceCategoryLabel(sheet.categoryId))}</strong>
+              </div>
+              <button class="button button-outline button-full" type="button" data-action="open-attendance-categories">${icon("settings-2")} Uredi kategorije</button>
+            </div>
+          </section>
+        </aside>
+      </section>
+
+      <div class="tools-panel-backdrop${state.toolsPanelOpen ? " is-open" : ""}" data-action="close-tools" aria-hidden="true"></div>
+      <button class="mobile-panel-toggle" type="button" data-action="toggle-tools" aria-controls="toolsPanel" aria-expanded="${state.toolsPanelOpen ? "true" : "false"}">${icon("panel-right")} Pregled</button>
+      <input class="hidden-input" type="file" id="attendanceCsvInput" accept=".csv,text/csv,text/plain" />
+      ${renderAttendanceImportModal()}
+      ${renderAttendanceArchiveModal()}
+      ${renderAttendanceCategoryModal()}
+      ${renderAttendanceDeleteConfirm()}
+      ${renderAttendanceExportPrompt()}
+      ${renderUnsavedPrompt()}
+    </main>
+  `;
+
+  bindAttendanceEvents();
+  refreshIcons();
+  renderToast();
+}
+
 function render() {
+  if (state.documentType === "attendance") {
+    renderAttendanceSheet();
+    return;
+  }
   if (state.documentType === "materialIssue") {
     renderMaterialIssue();
     return;
@@ -1899,6 +2649,310 @@ function bindMaterialIssueEvents() {
   document.getElementById("signatureInput")?.addEventListener("change", handleSignatureSelected);
   bindSignatureEvents();
 
+  document.querySelectorAll("[data-action]").forEach((button) => {
+    button.addEventListener("click", () => handleAction(button.dataset.action));
+  });
+  bindEvidenceNavigationEvents();
+}
+
+function clearAttendanceValidation() {
+  state.attendanceValidation = {
+    message: "",
+    fields: {},
+    firstInvalidField: ""
+  };
+}
+
+function clearAttendanceValidationField(fieldName) {
+  if (!state.attendanceValidation.fields?.[fieldName]) return;
+  const fields = { ...state.attendanceValidation.fields };
+  delete fields[fieldName];
+  state.attendanceValidation = {
+    ...state.attendanceValidation,
+    fields,
+    message: Object.keys(fields).length ? state.attendanceValidation.message : "",
+    firstInvalidField:
+      state.attendanceValidation.firstInvalidField === fieldName
+        ? Object.keys(fields)[0] || ""
+        : state.attendanceValidation.firstInvalidField
+  };
+}
+
+function attendanceValidationSelector(fieldName) {
+  if (fieldName === "participants") return "[data-action='add-attendance-participant']";
+  if (fieldName.startsWith("participants.")) {
+    const [, participantId, participantField] = fieldName.split(".");
+    return `[data-attendance-participant-id="${CSS.escape(participantId)}"][data-attendance-participant-field="${CSS.escape(participantField)}"]`;
+  }
+  return `[data-attendance-field="${CSS.escape(fieldName)}"]`;
+}
+
+function focusAttendanceValidationTarget(validation) {
+  const selector = attendanceValidationSelector(validation?.firstInvalidField || "");
+  if (!selector) return;
+  window.setTimeout(() => {
+    const target = document.querySelector(selector);
+    if (!(target instanceof HTMLElement)) return;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ block: "center", inline: "nearest" });
+  }, 60);
+}
+
+function validateCurrentAttendanceSheet() {
+  const validation = validateAttendanceSheet(state.currentAttendanceSheet);
+  state.attendanceValidation = validation;
+  if (!validation.valid) {
+    render();
+    focusAttendanceValidationTarget(validation);
+  }
+  return validation;
+}
+
+function currentAttendanceProfile() {
+  const latestIssue = sortRecent(state.materialIssues)[0];
+  const latestProposal = sortRecent(state.proposals)[0] || state.current;
+  return {
+    fullName: latestIssue?.issuerName || latestProposal?.fullName || "",
+    labName:
+      latestIssue?.labName ||
+      String(latestProposal?.purpose || "").replace(/^za potrebe\s+/i, "").trim()
+  };
+}
+
+function attendanceDefaultMetadata() {
+  const latest = sortRecent(state.attendanceSheets)[0];
+  const profile = currentAttendanceProfile();
+  return {
+    lastSheet: latest,
+    profile,
+    categoryId: latest?.categoryId || DEFAULT_ATTENDANCE_CATEGORIES[0].id,
+    mentorName: latest?.mentorName || profile.fullName || "",
+    labName: latest?.labName || profile.labName || "",
+    location: latest?.location || DEFAULTS.city
+  };
+}
+
+function updateAttendanceDuplicateFlags() {
+  const counts = new Map();
+  state.currentAttendanceSheet.participants.forEach((participant) => {
+    const email = String(participant.email || "").trim().toLocaleLowerCase("sl-SI");
+    if (email) counts.set(email, (counts.get(email) || 0) + 1);
+  });
+  state.currentAttendanceSheet.participants.forEach((participant) => {
+    const email = String(participant.email || "").trim().toLocaleLowerCase("sl-SI");
+    participant.duplicateEmail = Boolean(email && (counts.get(email) || 0) > 1);
+  });
+}
+
+function showAttendanceSuggestions(input) {
+  const field = input.dataset.attendanceSmartField;
+  const wrapper = input.closest(".smart-field");
+  if (!wrapper || !field) return;
+  wrapper.querySelector(".suggestion-popover")?.remove();
+  const suggestions = attendanceSuggestions(state.attendanceSheets, field, input.value);
+  if (!suggestions.length) return;
+
+  const popover = document.createElement("div");
+  popover.className = "suggestion-popover";
+  popover.setAttribute("role", "listbox");
+  suggestions.forEach((suggestion) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "suggestion-button";
+    button.textContent = suggestion;
+    button.addEventListener("click", () => {
+      input.value = suggestion;
+      state.currentAttendanceSheet[field] = suggestion;
+      clearAttendanceValidationField(field);
+      markDirty();
+      popover.remove();
+      input.focus();
+    });
+    popover.append(button);
+  });
+  wrapper.append(popover);
+}
+
+function bindAttendanceDropzone() {
+  const dropzone = document.querySelector("[data-attendance-dropzone]");
+  if (!dropzone) return;
+  const markDragging = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!state.busy) dropzone.classList.add("is-dragging");
+  };
+  const clearDragging = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dropzone.classList.remove("is-dragging");
+  };
+  dropzone.addEventListener("dragenter", markDragging);
+  dropzone.addEventListener("dragover", markDragging);
+  dropzone.addEventListener("dragleave", clearDragging);
+  dropzone.addEventListener("drop", async (event) => {
+    clearDragging(event);
+    const [file] = event.dataTransfer?.files || [];
+    if (!file) return;
+    await handleAttendanceCsvFile(file);
+  });
+}
+
+function bindAttendanceEvents() {
+  document.querySelectorAll("[data-attendance-field]").forEach((field) => {
+    const update = (event) => {
+      const name = event.currentTarget.dataset.attendanceField;
+      state.currentAttendanceSheet[name] = event.currentTarget.value;
+      clearAttendanceValidationField(name);
+      markDirty();
+      if (event.currentTarget.dataset.attendanceSmartField) {
+        showAttendanceSuggestions(event.currentTarget);
+      }
+    };
+    field.addEventListener("input", update);
+    field.addEventListener("change", update);
+    if (field.dataset.attendanceSmartField) {
+      field.addEventListener("focus", (event) => showAttendanceSuggestions(event.currentTarget));
+    }
+  });
+
+  document.querySelectorAll("[data-attendance-participant-field]").forEach((field) => {
+    field.addEventListener("input", (event) => {
+      const participant = state.currentAttendanceSheet.participants.find(
+        (item) => item.id === event.currentTarget.dataset.attendanceParticipantId
+      );
+      if (!participant) return;
+      const name = event.currentTarget.dataset.attendanceParticipantField;
+      participant[name] =
+        name === "photoConsent"
+          ? normalizePhotoConsent(event.currentTarget.value)
+          : event.currentTarget.value;
+      clearAttendanceValidationField(`participants.${participant.id}.${name}`);
+      markDirty();
+    });
+    if (field.dataset.attendanceParticipantField === "email") {
+      field.addEventListener("blur", () => {
+        updateAttendanceDuplicateFlags();
+        render();
+      });
+    }
+  });
+
+  document.querySelectorAll("[data-remove-attendance-participant]").forEach((button) => {
+    button.addEventListener("click", () => removeAttendanceParticipant(button.dataset.removeAttendanceParticipant));
+  });
+  document.querySelectorAll("[data-attendance-confirm]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const participant = state.currentAttendanceSheet.participants.find(
+        (item) => item.id === checkbox.dataset.attendanceConfirm
+      );
+      if (!participant) return;
+      participant.attended = checkbox.checked;
+      markDirty();
+      render();
+    });
+  });
+  document.querySelectorAll("[data-attendance-confirm-all]").forEach((checkbox) => {
+    checkbox.indeterminate = checkbox.dataset.partiallyChecked === "true";
+    checkbox.addEventListener("change", () => {
+      state.currentAttendanceSheet.participants.forEach((participant) => {
+        participant.attended = checkbox.checked;
+      });
+      markDirty();
+      render();
+    });
+  });
+  document.querySelectorAll("[data-load-attendance-sheet-id]").forEach((button) => {
+    button.addEventListener("click", () => loadAttendanceSheet(button.dataset.loadAttendanceSheetId));
+  });
+  document.querySelectorAll("[data-request-delete-attendance-id]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      requestDeleteAttendanceSheet(button.dataset.requestDeleteAttendanceId);
+    });
+  });
+
+  document.getElementById("attendanceCsvInput")?.addEventListener("change", async (event) => {
+    const [file] = event.currentTarget.files || [];
+    event.currentTarget.value = "";
+    if (file) await handleAttendanceCsvFile(file);
+  });
+  bindAttendanceDropzone();
+
+  document.querySelectorAll("[data-attendance-import-field]").forEach((field) => {
+    field.addEventListener("input", updateAttendanceImportField);
+    field.addEventListener("change", updateAttendanceImportField);
+  });
+  document.querySelectorAll("[data-attendance-import-action]").forEach((button) => {
+    button.addEventListener("click", () => handleAttendanceImportAction(button.dataset.attendanceImportAction));
+  });
+
+  document.querySelectorAll("[data-attendance-archive-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.attendanceArchiveTab = button.dataset.attendanceArchiveTab;
+      render();
+    });
+  });
+  document.querySelector("[data-attendance-search]")?.addEventListener("input", (event) => {
+    state.attendanceSearchQuery = event.currentTarget.value;
+    render();
+    window.setTimeout(() => {
+      const search = document.querySelector("[data-attendance-search]");
+      search?.focus();
+      search?.setSelectionRange?.(search.value.length, search.value.length);
+    }, 0);
+  });
+
+  document.querySelector("[data-attendance-category-form]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const category = createCustomAttendanceCategory(new FormData(event.currentTarget).get("categoryLabel"));
+    if (!category) return;
+    state.attendanceCategories = normalizeAttendanceCategories([...state.attendanceCategories, category]);
+    await persistAttendanceCategories();
+    render();
+  });
+  document.querySelectorAll("[data-attendance-category-label]").forEach((input) => {
+    input.addEventListener("change", async () => {
+      const category = state.attendanceCategories.find((item) => item.id === input.dataset.attendanceCategoryLabel);
+      const label = input.value.trim();
+      if (!category || category.builtIn || !label) return;
+      category.label = label;
+      await persistAttendanceCategories();
+      render();
+    });
+  });
+  document.querySelectorAll("[data-attendance-category-visible]").forEach((checkbox) => {
+    checkbox.addEventListener("change", async () => {
+      const category = state.attendanceCategories.find((item) => item.id === checkbox.dataset.attendanceCategoryVisible);
+      if (!category) return;
+      if (
+        !checkbox.checked &&
+        state.attendanceCategories.filter((item) => !item.hidden && item.id !== category.id).length === 0
+      ) {
+        checkbox.checked = true;
+        showToast("Vsaj ena kategorija mora ostati vidna.");
+        return;
+      }
+      category.hidden = !checkbox.checked;
+      await persistAttendanceCategories();
+      render();
+    });
+  });
+  document.querySelectorAll("[data-delete-attendance-category]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await deleteCustomAttendanceCategory(button.dataset.deleteAttendanceCategory);
+    });
+  });
+
+  document.querySelectorAll(".modal-backdrop").forEach((backdrop) => {
+    backdrop.addEventListener("click", (event) => {
+      if (event.target !== event.currentTarget) return;
+      if (backdrop.classList.contains("attendance-archive-backdrop")) closeAttendanceArchive();
+      if (backdrop.classList.contains("attendance-category-backdrop")) closeAttendanceCategories();
+    });
+  });
+  document.querySelectorAll("[data-modal-window]").forEach((modal) => {
+    modal.addEventListener("click", (event) => event.stopPropagation());
+  });
   document.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => handleAction(button.dataset.action));
   });
@@ -2609,6 +3663,315 @@ async function removeSignature() {
   showToast("Shranjeni podpis je odstranjen.");
 }
 
+function addAttendanceParticipant() {
+  state.currentAttendanceSheet.participants.push(createAttendanceParticipant());
+  clearAttendanceValidationField("participants");
+  markDirty();
+  render();
+  window.setTimeout(() => {
+    const participant = state.currentAttendanceSheet.participants.at(-1);
+    document
+      .querySelector(`[data-attendance-participant-id="${CSS.escape(participant.id)}"][data-attendance-participant-field="firstName"]`)
+      ?.focus();
+  }, 0);
+}
+
+function removeAttendanceParticipant(participantId) {
+  state.currentAttendanceSheet.participants = state.currentAttendanceSheet.participants.filter(
+    (participant) => participant.id !== participantId
+  );
+  Object.keys(state.attendanceValidation.fields || {})
+    .filter((field) => field.startsWith(`participants.${participantId}.`))
+    .forEach(clearAttendanceValidationField);
+  updateAttendanceDuplicateFlags();
+  markDirty();
+  render();
+}
+
+async function handleAttendanceCsvFile(file) {
+  if (state.dirty) {
+    pendingAttendanceFile = file;
+    requestUnsavedChanges({ type: "import-attendance-file" });
+    return;
+  }
+  if (!/\.csv$/i.test(file.name) && !["text/csv", "text/plain", "application/vnd.ms-excel"].includes(file.type)) {
+    showToast("Izberi datoteko CSV, izvoženo iz Wagtaila.");
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    showToast("CSV datoteka je prevelika. Največja dovoljena velikost je 5 MB.");
+    return;
+  }
+
+  try {
+    const groups = parseWagtailAttendanceCsv(await file.text(), file.name);
+    const defaults = attendanceDefaultMetadata();
+    state.attendanceImport = {
+      fileName: file.name,
+      groups: groups.map((group) => ({
+        ...group,
+        categoryId: defaults.categoryId,
+        mentorName: defaults.mentorName,
+        labName: defaults.labName,
+        location: defaults.location
+      })),
+      defaults,
+      error: "",
+      fieldErrors: {}
+    };
+    render();
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "CSV datoteke ni bilo mogoče uvoziti.");
+  }
+}
+
+function updateAttendanceImportField(event) {
+  if (!state.attendanceImport) return;
+  const index = Number(event.currentTarget.dataset.attendanceImportIndex);
+  const group = state.attendanceImport.groups[index];
+  if (!group) return;
+  group[event.currentTarget.dataset.attendanceImportField] = event.currentTarget.value;
+  state.attendanceImport.error = "";
+  delete state.attendanceImport.fieldErrors?.[
+    `${index}.${event.currentTarget.dataset.attendanceImportField}`
+  ];
+}
+
+async function handleAttendanceImportAction(action) {
+  if (action === "cancel") {
+    state.attendanceImport = null;
+    render();
+    return;
+  }
+  if (action !== "confirm" || !state.attendanceImport) return;
+
+  const sheets = state.attendanceImport.groups.map((group) =>
+    attendanceSheetFromImportGroup(group, state.attendanceImport.defaults)
+  );
+  const invalidIndex = sheets.findIndex((sheet) => !validateAttendanceSheet(sheet).valid);
+  if (invalidIndex >= 0) {
+    const validation = validateAttendanceSheet(sheets[invalidIndex]);
+    state.attendanceImport.fieldErrors = Object.fromEntries(
+      Object.entries(validation.fields)
+        .filter(([field]) => !field.startsWith("participants."))
+        .map(([field, message]) => [`${invalidIndex}.${field}`, message])
+    );
+    const hasParticipantErrors = Object.keys(validation.fields).some((field) =>
+      field.startsWith("participants.")
+    );
+    state.attendanceImport.error = hasParticipantErrors
+      ? `List ${invalidIndex + 1}: preverite podatke udeležencev v datoteki CSV.`
+      : `List ${invalidIndex + 1}: dopolnite označena obvezna polja.`;
+    render();
+    const field = validation.firstInvalidField.split(".")[0];
+    window.setTimeout(() => {
+      document
+        .querySelector(`[data-attendance-import-index="${invalidIndex}"][data-attendance-import-field="${CSS.escape(field)}"]`)
+        ?.focus();
+    }, 0);
+    return;
+  }
+
+  const savedSheets = sheets.map(attendanceSheetWithSaveMetadata);
+  await persistAttendanceSheets(savedSheets);
+  state.attendanceSheets = sortRecent(await getAllAttendanceSheets());
+  state.currentAttendanceSheet = {
+    ...savedSheets[0],
+    participants: savedSheets[0].participants.map((participant) => ({ ...participant }))
+  };
+  state.attendanceImport = null;
+  clearAttendanceValidation();
+  clearDirty();
+  render();
+  showToast(
+    savedSheets.length === 1
+      ? `Uvožen je podpisni list z ${savedSheets[0].participants.length} udeleženci.`
+      : `Ustvarjenih je ${savedSheets.length} podpisnih listov.`
+  );
+}
+
+async function persistAttendanceCategories() {
+  state.attendanceCategories = normalizeAttendanceCategories(state.attendanceCategories);
+  await saveAsset({
+    id: ATTENDANCE_CATEGORY_ASSET_ID,
+    categories: state.attendanceCategories,
+    updatedAt: new Date().toISOString()
+  });
+}
+
+async function deleteCustomAttendanceCategory(categoryId) {
+  const category = state.attendanceCategories.find((item) => item.id === categoryId);
+  if (!category || category.builtIn) return;
+  state.attendanceCategories = state.attendanceCategories.filter((item) => item.id !== categoryId);
+  if (state.currentAttendanceSheet.categoryId === categoryId) {
+    state.currentAttendanceSheet.categoryId =
+      state.attendanceCategories.find((item) => !item.hidden)?.id || DEFAULT_ATTENDANCE_CATEGORIES[0].id;
+    markDirty();
+  }
+  await persistAttendanceCategories();
+  render();
+}
+
+function openAttendanceArchive() {
+  state.attendanceArchiveOpen = true;
+  state.attendanceArchiveTab = "search";
+  render();
+}
+
+function closeAttendanceArchive() {
+  state.attendanceArchiveOpen = false;
+  state.attendanceSearchQuery = "";
+  render();
+}
+
+function openAttendanceCategories() {
+  state.attendanceCategoryModalOpen = true;
+  render();
+}
+
+function closeAttendanceCategories() {
+  state.attendanceCategoryModalOpen = false;
+  render();
+}
+
+function requestDeleteAttendanceSheet(id) {
+  if (!id) return;
+  if (state.dirty && state.currentAttendanceSheet.id === id) {
+    requestUnsavedChanges({ type: "delete-attendance", sheetId: id });
+    return;
+  }
+  state.attendanceDeleteConfirmId = id;
+  render();
+}
+
+async function confirmDeleteAttendanceSheet() {
+  const id = state.attendanceDeleteConfirmId;
+  if (!id) return;
+  await deleteAttendanceSheet(id);
+  state.attendanceSheets = sortRecent(await getAllAttendanceSheets());
+  if (state.currentAttendanceSheet.id === id) {
+    state.currentAttendanceSheet = createBlankAttendanceSheet(
+      state.attendanceSheets[0],
+      currentAttendanceProfile()
+    );
+    clearDirty();
+  }
+  state.attendanceDeleteConfirmId = "";
+  state.attendanceArchiveOpen = false;
+  render();
+  showToast("Podpisni list je izbrisan.");
+}
+
+async function newAttendanceSheet({ skipUnsavedGuard = false } = {}) {
+  if (state.dirty && !skipUnsavedGuard) {
+    requestUnsavedChanges({ type: "new" });
+    return;
+  }
+  state.currentAttendanceSheet = createBlankAttendanceSheet(
+    sortRecent(state.attendanceSheets)[0],
+    currentAttendanceProfile()
+  );
+  state.toolsPanelOpen = false;
+  clearAttendanceValidation();
+  clearDirty();
+  render();
+}
+
+async function saveCurrentAttendanceSheet({ silent = false } = {}) {
+  const validation = validateCurrentAttendanceSheet();
+  if (!validation.valid) return null;
+  const saved = attendanceSheetWithSaveMetadata(state.currentAttendanceSheet);
+  await persistAttendanceSheet(saved);
+  state.currentAttendanceSheet = saved;
+  state.attendanceSheets = sortRecent(await getAllAttendanceSheets());
+  clearAttendanceValidation();
+  clearDirty();
+  render();
+  if (!silent) showToast("Podpisni list je shranjen.");
+  return saved;
+}
+
+async function loadAttendanceSheet(id, { skipUnsavedGuard = false } = {}) {
+  if (state.dirty && !skipUnsavedGuard) {
+    requestUnsavedChanges({ type: "load-attendance", sheetId: id });
+    return;
+  }
+  const sheet = state.attendanceSheets.find((item) => item.id === id);
+  if (!sheet) return;
+  state.currentAttendanceSheet = {
+    ...sheet,
+    participants: (sheet.participants || []).map((participant) => ({ ...participant }))
+  };
+  state.attendanceArchiveOpen = false;
+  state.attendanceSearchQuery = "";
+  state.toolsPanelOpen = false;
+  clearAttendanceValidation();
+  clearDirty();
+  render();
+}
+
+async function exportAttendanceSheetPdf(mode, { allowIncomplete = false } = {}) {
+  const validation = validateAttendanceSheet(state.currentAttendanceSheet);
+  state.attendanceValidation = validation;
+  if (!validation.valid && !allowIncomplete) {
+    state.attendanceExportPrompt = {
+      mode,
+      missingCount: Object.keys(validation.fields || {}).length
+    };
+    render();
+    return;
+  }
+
+  setBusy(true);
+  try {
+    let documentForExport;
+    if (validation.valid) {
+      documentForExport = await saveCurrentAttendanceSheet({ silent: true });
+      if (!documentForExport) return;
+    } else {
+      documentForExport = attendanceSheetWithSaveMetadata(state.currentAttendanceSheet);
+    }
+
+    const pdfBlob = await createAttendanceSheetPdfBlob(documentForExport, state.attendanceCategories);
+    const fileName = `${safeFileName(
+      `podpisni-list-${documentForExport.programName || "brez-naziva"}-${documentForExport.eventDate || "brez-datuma"}`
+    )}.pdf`;
+    if (mode === "print") {
+      const url = URL.createObjectURL(pdfBlob);
+      const printWindow = window.open(url, "_blank");
+      if (!printWindow) {
+        downloadBlob(pdfBlob, fileName);
+        showToast("Brskalnik je blokiral tiskanje, zato sem prenesel podpisni list PDF.");
+      } else {
+        printWindow.addEventListener("load", () => printWindow.print(), { once: true });
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        showToast("Podpisni list je pripravljen za tiskanje.");
+      }
+    } else {
+      downloadBlob(pdfBlob, fileName);
+      showToast("Podpisni list PDF je pripravljen za prenos.");
+    }
+  } finally {
+    setBusy(false);
+  }
+}
+
+function cancelAttendanceExport() {
+  if (!state.attendanceExportPrompt) return;
+  state.attendanceExportPrompt = null;
+  render();
+  focusAttendanceValidationTarget(state.attendanceValidation);
+}
+
+async function confirmAttendanceExport() {
+  const mode = state.attendanceExportPrompt?.mode;
+  if (!mode) return;
+  state.attendanceExportPrompt = null;
+  render();
+  await exportAttendanceSheetPdf(mode, { allowIncomplete: true });
+}
+
 async function handleAction(action) {
   try {
     if (isOnboardingCalculatorDemoStep()) {
@@ -2618,17 +3981,27 @@ async function handleAction(action) {
     if (action === "new") {
       if (state.documentType === "materialIssue") {
         await newMaterialIssue();
+      } else if (state.documentType === "attendance") {
+        await newAttendanceSheet();
       } else {
         await newDocument();
       }
     } else if (action === "save") {
       if (state.documentType === "materialIssue") {
         await saveCurrentMaterialIssue();
+      } else if (state.documentType === "attendance") {
+        await saveCurrentAttendanceSheet();
       } else {
         await saveCurrentDocument();
       }
     } else if (action === "attach") {
       document.getElementById("offerInput")?.click();
+    } else if (action === "import-attendance") {
+      if (state.dirty) {
+        requestUnsavedChanges({ type: "import-attendance" });
+      } else {
+        document.getElementById("attendanceCsvInput")?.click();
+      }
     } else if (action === "upload-signature") {
       document.getElementById("signatureInput")?.click();
     } else if (action === "insert-signature") {
@@ -2656,17 +4029,23 @@ async function handleAction(action) {
     } else if (action === "download") {
       if (state.documentType === "materialIssue") {
         await exportMaterialIssuePdf("download");
+      } else if (state.documentType === "attendance") {
+        await exportAttendanceSheetPdf("download");
       } else {
         await exportPdf("download");
       }
     } else if (action === "print") {
       if (state.documentType === "materialIssue") {
         await exportMaterialIssuePdf("print");
+      } else if (state.documentType === "attendance") {
+        await exportAttendanceSheetPdf("print");
       } else {
         await exportPdf("print");
       }
     } else if (action === "add-material-row") {
       addMaterialRow();
+    } else if (action === "add-attendance-participant") {
+      addAttendanceParticipant();
     } else if (action === "open-history") {
       openHistoryModal();
     } else if (action === "close-history") {
@@ -2675,6 +4054,23 @@ async function handleAction(action) {
       toggleToolsPanel();
     } else if (action === "close-tools") {
       closeToolsPanel();
+    } else if (action === "open-attendance-archive") {
+      openAttendanceArchive();
+    } else if (action === "close-attendance-archive") {
+      closeAttendanceArchive();
+    } else if (action === "open-attendance-categories") {
+      openAttendanceCategories();
+    } else if (action === "close-attendance-categories") {
+      closeAttendanceCategories();
+    } else if (action === "cancel-delete-attendance") {
+      state.attendanceDeleteConfirmId = "";
+      render();
+    } else if (action === "confirm-delete-attendance") {
+      await confirmDeleteAttendanceSheet();
+    } else if (action === "cancel-attendance-export") {
+      cancelAttendanceExport();
+    } else if (action === "confirm-attendance-export") {
+      await confirmAttendanceExport();
     } else if (action === "cancel-delete") {
       closeDeleteConfirm();
     } else if (action === "confirm-delete") {
@@ -2752,6 +4148,8 @@ async function continueUnsavedAction() {
   if (action.type === "new") {
     if (state.documentType === "materialIssue") {
       await newMaterialIssue({ skipUnsavedGuard: true });
+    } else if (state.documentType === "attendance") {
+      await newAttendanceSheet({ skipUnsavedGuard: true });
     } else {
       await newDocument({ skipUnsavedGuard: true });
     }
@@ -2759,6 +4157,17 @@ async function continueUnsavedAction() {
     await loadExistingDocument(action.proposalId, { skipUnsavedGuard: true });
   } else if (action.type === "load-material-issue") {
     await loadMaterialIssue(action.issueId, { skipUnsavedGuard: true });
+  } else if (action.type === "load-attendance") {
+    await loadAttendanceSheet(action.sheetId, { skipUnsavedGuard: true });
+  } else if (action.type === "delete-attendance") {
+    state.attendanceDeleteConfirmId = action.sheetId;
+    render();
+  } else if (action.type === "import-attendance") {
+    document.getElementById("attendanceCsvInput")?.click();
+  } else if (action.type === "import-attendance-file") {
+    const file = pendingAttendanceFile;
+    pendingAttendanceFile = null;
+    if (file) await handleAttendanceCsvFile(file);
   } else if (action.type === "delete") {
     openDeleteConfirm(action.proposalId, { skipUnsavedGuard: true });
   } else if (action.type === "switch-document") {
@@ -3005,7 +4414,7 @@ async function switchDocumentType({ skipUnsavedGuard = false, target = "" } = {}
       state.attachment = null;
       state.persistedAttachmentId = "";
     }
-  } else {
+  } else if (nextType === "materialIssue") {
     const latestIssue = sortRecent(state.materialIssues)[0];
     const latestProposal = sortRecent(state.proposals)[0];
     state.currentMaterialIssue = latestIssue
@@ -3014,6 +4423,14 @@ async function switchDocumentType({ skipUnsavedGuard = false, target = "" } = {}
           items: (latestIssue.items || []).map((row) => ({ ...row }))
         }
       : createBlankMaterialIssue(null, latestProposal);
+  } else if (nextType === "attendance") {
+    const latestSheet = sortRecent(state.attendanceSheets)[0];
+    state.currentAttendanceSheet = latestSheet
+      ? {
+          ...latestSheet,
+          participants: (latestSheet.participants || []).map((participant) => ({ ...participant }))
+        }
+      : createBlankAttendanceSheet(null, currentAttendanceProfile());
   }
 
   state.documentType = nextType;
@@ -3025,6 +4442,7 @@ async function switchDocumentType({ skipUnsavedGuard = false, target = "" } = {}
   clearDirty();
   clearValidation();
   clearMaterialValidation();
+  clearAttendanceValidation();
   document.title = "Center Rog evidence";
   render();
 }
@@ -3365,17 +4783,25 @@ async function clearLocalPreviewServiceWorker() {
 
 async function init() {
   await deleteOrphanAttachments();
-  const [proposals, materialIssues, signatureAsset] = await Promise.all([
+  const [proposals, materialIssues, attendanceSheets, signatureAsset, attendanceCategoryAsset] = await Promise.all([
     getAllProposals(),
     getAllMaterialIssues(),
-    getAsset(SIGNATURE_ASSET_ID)
+    getAllAttendanceSheets(),
+    getAsset(SIGNATURE_ASSET_ID),
+    getAsset(ATTENDANCE_CATEGORY_ASSET_ID)
   ]);
   state.proposals = sortRecent(proposals);
   state.materialIssues = sortRecent(materialIssues);
+  state.attendanceSheets = sortRecent(attendanceSheets);
+  state.attendanceCategories = normalizeAttendanceCategories(attendanceCategoryAsset?.categories || []);
   setSignatureAsset(signatureAsset);
   const last = state.proposals[0];
   state.current = last ? createBlankProposal(last) : createBlankProposal();
   state.currentMaterialIssue = createBlankMaterialIssue(state.materialIssues[0], last);
+  state.currentAttendanceSheet = createBlankAttendanceSheet(
+    state.attendanceSheets[0],
+    currentAttendanceProfile()
+  );
   state.attachment = null;
   state.persistedAttachmentId = "";
   document.title = "Center Rog evidence";
