@@ -1553,8 +1553,8 @@ function attendanceParticipantMarkup(participant, displayIndex) {
             ${attendanceValidationAttrs(`${prefix}.photoConsent`)}
           >
             <option value="" ${participant.photoConsent === null ? "selected" : ""}>—</option>
-            <option value="yes" ${participant.photoConsent === true ? "selected" : ""}>DA</option>
-            <option value="no" ${participant.photoConsent === false ? "selected" : ""}>NE</option>
+            <option value="yes" ${participant.photoConsent === true ? "selected" : ""}>✓</option>
+            <option value="no" ${participant.photoConsent === false ? "selected" : ""}>✕</option>
           </select>
           <button class="attendance-remove-participant" type="button" data-remove-attendance-participant="${escapeHtml(participant.id)}" aria-label="Odstrani udeleženca ${displayIndex}">
             ${icon("trash-2")}

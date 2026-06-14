@@ -72,8 +72,8 @@ bor@example.com,Delavnica,09:00,2026-06-15,Bor,Kovač,False`;
   const [group] = parseWagtailAttendanceCsv(csv);
   assert.equal(group.participants[0].photoConsent, true);
   assert.equal(group.participants[1].photoConsent, false);
-  assert.equal(photoConsentLabel(group.participants[0].photoConsent), "DA");
-  assert.equal(photoConsentLabel(group.participants[1].photoConsent), "NE");
+  assert.equal(photoConsentLabel(group.participants[0].photoConsent), "✓");
+  assert.equal(photoConsentLabel(group.participants[1].photoConsent), "✕");
   assert.equal(normalizePhotoConsent("Da"), true);
   assert.equal(normalizePhotoConsent("Ne"), false);
 });
@@ -117,7 +117,7 @@ test("validates metadata, participant names and email format", () => {
   );
   assert.equal(
     validation.fields[`participants.${participantId}.photoConsent`],
-    "Izberite DA ali NE."
+    "Izberite kljukico ali križec."
   );
 });
 

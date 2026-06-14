@@ -63,8 +63,8 @@ export function normalizePhotoConsent(value) {
 
 export function photoConsentLabel(value) {
   const normalized = normalizePhotoConsent(value);
-  if (normalized === true) return "DA";
-  if (normalized === false) return "NE";
+  if (normalized === true) return "✓";
+  if (normalized === false) return "✕";
   return "—";
 }
 
@@ -325,7 +325,7 @@ export function validateAttendanceSheet(sheet) {
       fields[`${prefix}.email`] = "Vnesite veljaven e-poštni naslov.";
     }
     if (participant.photoConsent === null || participant.photoConsent === undefined) {
-      fields[`${prefix}.photoConsent`] = "Izberite DA ali NE.";
+      fields[`${prefix}.photoConsent`] = "Izberite kljukico ali križec.";
     }
   });
 
