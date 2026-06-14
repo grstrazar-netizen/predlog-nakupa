@@ -16,8 +16,8 @@ import {
   validateAttendanceSheet
 } from "../src/attendance-sheet.js";
 
-test("keeps twelve signature rows on each landscape page", () => {
-  assert.equal(ATTENDANCE_ROWS_PER_PAGE, 12);
+test("keeps sixteen compact signature rows on each landscape page", () => {
+  assert.equal(ATTENDANCE_ROWS_PER_PAGE, 16);
 });
 
 const sampleCsv = `email,event,start_time,start_day,name,surname,question 0,question 0

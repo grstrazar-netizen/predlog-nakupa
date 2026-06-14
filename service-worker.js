@@ -1,4 +1,4 @@
-const CACHE_NAME = "predlog-nakupa-v71";
+const CACHE_NAME = "predlog-nakupa-v73";
 const CACHE_PREFIX = "predlog-nakupa-";
 const IS_LOCAL_DEV = ["localhost", "127.0.0.1", "::1"].includes(self.location.hostname);
 const ASSETS = [
@@ -12,6 +12,10 @@ const ASSETS = [
   "/src/material-issue-pdf.js",
   "/src/attendance-sheet.js",
   "/src/attendance-sheet-pdf.js",
+  "/src/hour-report.js",
+  "/src/hour-security.js",
+  "/src/hour-report-pdf.js",
+  "/src/hour-report-ui.js",
   "/src/utils.js",
   "/src/styles.css",
   "/manifest.webmanifest",
@@ -20,7 +24,9 @@ const ASSETS = [
   "/assets/fonts/NotoSans-Regular.ttf",
   "/assets/fonts/NotoSans-SemiBold.ttf",
   "/assets/fonts/NotoSans-Bold.ttf",
-  "/assets/fonts/NotoSans-Italic.ttf"
+  "/assets/fonts/NotoSans-Italic.ttf",
+  "/assets/vendor/xlsx.full.min.js",
+  "/assets/vendor/jszip.min.js"
 ];
 
 const CACHEABLE_ORIGINS = new Set([

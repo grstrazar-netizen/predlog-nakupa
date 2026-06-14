@@ -25,6 +25,7 @@ import {
   deleteAsset,
   deleteAttendanceSheet,
   getAllAttendanceSheets,
+  getAllHourProfiles,
   getAllMaterialIssues,
   getAsset,
   deleteProposalBundle,
@@ -33,6 +34,8 @@ import {
   saveAsset,
   saveAttendanceSheet as persistAttendanceSheet,
   saveAttendanceSheets as persistAttendanceSheets,
+  saveHourSecurityBundle,
+  clearHourSecurityData,
   saveMaterialIssue as persistMaterialIssue,
   saveProposal,
   saveProposalBundle
@@ -40,6 +43,30 @@ import {
 import { createCombinedPdfBlob, createProposalPdfBlob } from "./pdf.js";
 import { createMaterialIssuePdfBlob } from "./material-issue-pdf.js";
 import { createAttendanceSheetPdfBlob } from "./attendance-sheet-pdf.js";
+import { createHourReportPdfBlob, createHourReportsPdfBlob } from "./hour-report-pdf.js";
+import { renderHourReportsWorkspace } from "./hour-report-ui.js";
+import {
+  createHourProfile,
+  hoursBetweenTimes,
+  hourReportFileName,
+  normalizeHours,
+  normalizeRateCents,
+  parseConnecteamWorkbook,
+  profileRateForDate,
+  resetHourRow,
+  updateReportProfile,
+  validateHourReport
+} from "./hour-report.js";
+import {
+  HOUR_SECURITY_ASSET_ID,
+  createHourSecurity,
+  decryptHourProfiles,
+  encryptHourProfiles,
+  isEncryptedHourProfileRecord,
+  replaceHourPin,
+  unlockHourDataKey,
+  validateHourPin
+} from "./hour-security.js";
 import {
   ATTENDANCE_CATEGORY_ASSET_ID,
   ATTENDANCE_ROWS_PER_PAGE,
@@ -102,6 +129,19 @@ const state = {
   attendanceCategoryModalOpen: false,
   attendanceDeleteConfirmId: "",
   attendanceExportPrompt: null,
+  hourProfiles: [],
+  hourBatch: null,
+  selectedHourReportId: "",
+  hourSecurity: {
+    status: "loading",
+    screen: "setup",
+    config: null,
+    profileRecords: [],
+    activeKey: null,
+    error: "",
+    failedAttempts: 0,
+    lockoutUntil: 0
+  },
   attachment: null,
   persistedAttachmentId: "",
   signatureAsset: null,
@@ -152,6 +192,8 @@ let toolbarTooltipDelayArmed = false;
 let suppressedRecentClickId = "";
 let beforeUnloadBound = false;
 let pendingAttendanceFile = null;
+let pendingHourReportFile = null;
+let hourSecurityCooldownTimer = 0;
 const ONBOARDING_STORAGE_KEY = "predlog-nakupa:onboarding-complete:v1";
 const DOCUMENT_POPOVER_HOVER_DELAY_MS = 1000;
 const RECENT_DELETE_DRAG_DISTANCE = 92;
@@ -746,6 +788,45 @@ function attendanceSaveState() {
   };
 }
 
+function hourReportsSaveState() {
+  if (state.hourSecurity.status !== "unlocked") {
+    return {
+      kind: "locked",
+      label: "Zaklenjeno",
+      detail:
+        state.hourSecurity.status === "unconfigured"
+          ? "Nastavi šestmestni PIN"
+          : "Za dostop vnesi PIN",
+      saveLabel: "Shrani profile"
+    };
+  }
+  const report = selectedHourReport();
+  if (!state.hourBatch) {
+    return {
+      kind: "unsaved",
+      label: "Ni uvoza",
+      detail: "Naloži Connecteam XLSX",
+      saveLabel: "Shrani profile"
+    };
+  }
+
+  if (state.dirty) {
+    return {
+      kind: "dirty",
+      label: "Neshranjene spremembe",
+      detail: report ? `${report.personName} · ${report.monthKey}` : state.hourBatch.fileName,
+      saveLabel: "Shrani profile"
+    };
+  }
+
+  return {
+    kind: "saved",
+    label: "Profili shranjeni",
+    detail: report ? `${report.personName} · ${report.monthKey}` : state.hourBatch.fileName,
+    saveLabel: "Shrani profile"
+  };
+}
+
 function materialValidationError(fieldName) {
   return state.materialValidation.fields?.[fieldName] || "";
 }
@@ -818,6 +899,8 @@ function syncSaveStateIndicator() {
       ? materialIssueSaveState()
       : state.documentType === "attendance"
         ? attendanceSaveState()
+        : state.documentType === "hourReports"
+          ? hourReportsSaveState()
         : documentSaveState();
   const pill = document.querySelector(".save-state-pill");
   if (pill) {
@@ -1005,6 +1088,11 @@ const EVIDENCE_TABS = [
     type: "attendance",
     label: "Podpisni listi",
     icon: "list-checks"
+  },
+  {
+    type: "hourReports",
+    label: "Poročila ur",
+    icon: "clock-3"
   }
 ];
 
@@ -1079,6 +1167,36 @@ function renderEvidenceTabs(activeType, disabledAttr = "") {
 }
 
 function renderDocumentCommands(type, saveState, disabledAttr = "") {
+  if (type === "hourReports") {
+    return `
+      <nav class="toolbar-actions command-bar side-command-bar" aria-label="Ukazi poročil ur">
+        <div class="command-section" role="group" aria-label="Uvoz">
+          <button class="button toolbar-button" type="button" data-action="new" data-tooltip="Počisti trenutni uvoz. Bližnjica: Ctrl/Cmd+N." aria-label="Nov uvoz" data-busy-sensitive ${disabledAttr}>
+            ${icon("file-plus-2")}
+          </button>
+          <button class="button toolbar-button" type="button" data-action="save" data-tooltip="${escapeHtml(saveState.saveLabel)} in bonuse za naslednji uvoz. Bližnjica: Ctrl/Cmd+S." aria-label="${escapeHtml(saveState.saveLabel)}" data-busy-sensitive ${disabledAttr}>
+            ${icon("save")}
+          </button>
+        </div>
+        <span class="command-divider" aria-hidden="true"></span>
+        <div class="command-section" role="group" aria-label="Excel">
+          <button class="button toolbar-button" type="button" data-action="import-hours" data-tooltip="Uvozi Connecteam datoteko XLSX." aria-label="Uvozi XLSX" data-busy-sensitive ${disabledAttr}>
+            ${icon("file-up")}
+          </button>
+        </div>
+        <span class="command-divider" aria-hidden="true"></span>
+        <div class="command-section" role="group" aria-label="Izvoz">
+          <button class="button toolbar-button toolbar-button-primary" type="button" data-action="download" data-tooltip="Prenesi PDF izbrane osebe." aria-label="Prenesi PDF" data-busy-sensitive ${disabledAttr}>
+            ${icon("download")}
+          </button>
+          <button class="button toolbar-button" type="button" data-action="print" data-tooltip="Natisni poročilo izbrane osebe. Bližnjica: Ctrl/Cmd+P." aria-label="Natisni poročilo" data-busy-sensitive ${disabledAttr}>
+            ${icon("printer")}
+          </button>
+        </div>
+      </nav>
+    `;
+  }
+
   if (type === "attendance") {
     return `
       <nav class="toolbar-actions command-bar side-command-bar" aria-label="Ukazi podpisnega lista">
@@ -2101,7 +2219,97 @@ function renderAttendanceSheet() {
   renderToast();
 }
 
+function selectedHourReport() {
+  const reports = state.hourBatch?.reports || [];
+  return (
+    reports.find((report) => report.id === state.selectedHourReportId) ||
+    reports[0] ||
+    null
+  );
+}
+
+function hourReportsUnlocked() {
+  return (
+    state.hourSecurity.status === "unlocked" &&
+    Boolean(state.hourSecurity.activeKey)
+  );
+}
+
+function ensureHourReportsUnlocked() {
+  if (hourReportsUnlocked()) return true;
+  if (state.hourSecurity.status === "reset-required") {
+    state.hourSecurity.screen = "reset-confirm";
+    render();
+    showToast("Zaščito Poročil ur je treba varno ponastaviti.");
+    return false;
+  }
+  state.hourSecurity.status = state.hourSecurity.config ? "locked" : "unconfigured";
+  state.hourSecurity.screen = state.hourSecurity.config ? "unlock" : "setup";
+  state.hourSecurity.error = "";
+  render();
+  showToast(
+    state.hourSecurity.config
+      ? "Za nadaljevanje najprej odkleni Poročila ur."
+      : "Za Poročila ur najprej nastavi šestmestni PIN."
+  );
+  return false;
+}
+
+function hourSecurityViewState() {
+  const remainingSeconds = Math.max(
+    0,
+    Math.ceil((state.hourSecurity.lockoutUntil - Date.now()) / 1000)
+  );
+  return {
+    status: state.hourSecurity.status,
+    screen: state.hourSecurity.screen,
+    configured: Boolean(state.hourSecurity.config),
+    error: state.hourSecurity.error,
+    failedAttempts: state.hourSecurity.failedAttempts,
+    remainingSeconds
+  };
+}
+
+function scheduleHourSecurityCooldownRender() {
+  window.clearInterval(hourSecurityCooldownTimer);
+  if (state.hourSecurity.lockoutUntil <= Date.now()) return;
+  hourSecurityCooldownTimer = window.setInterval(() => {
+    if (state.hourSecurity.lockoutUntil <= Date.now()) {
+      window.clearInterval(hourSecurityCooldownTimer);
+      state.hourSecurity.lockoutUntil = 0;
+    }
+    if (state.documentType === "hourReports") render();
+  }, 1000);
+}
+
+function renderHourReports() {
+  const saveState = hourReportsSaveState();
+  const disabledAttr = state.busy ? "disabled" : "";
+  root.innerHTML = renderHourReportsWorkspace({
+    batch: state.hourBatch,
+    selectedReport: selectedHourReport(),
+    security: hourSecurityViewState(),
+    saveState,
+    disabledAttr,
+    toolsPanelOpen: state.toolsPanelOpen,
+    renderEvidenceTabs,
+    renderDocumentCommands,
+    renderUnsavedPrompt,
+    icon,
+    escapeHtml,
+    formatCurrency
+  });
+  bindHourReportEvents();
+  scheduleHourSecurityCooldownRender();
+  refreshIcons();
+  renderToast();
+}
+
 function render() {
+  if (state.documentType === "hourReports") {
+    renderHourReports();
+    return;
+  }
   if (state.documentType === "attendance") {
     renderAttendanceSheet();
     return;
@@ -2959,6 +3167,575 @@ function bindAttendanceEvents() {
   bindEvidenceNavigationEvents();
 }
 
+function hourProfileWithMetadata(profile) {
+  const now = new Date().toISOString();
+  return {
+    ...createHourProfile(profile.name, profile),
+    createdAt: profile.createdAt || now,
+    updatedAt: now
+  };
+}
+
+function hourSecurityFormValue(form, name) {
+  return String(new FormData(form).get(name) || "").trim();
+}
+
+function setHourSecurityError(message) {
+  state.hourSecurity.error = message;
+  render();
+}
+
+async function setupHourSecurity(form) {
+  const pin = hourSecurityFormValue(form, "pin");
+  const pinConfirmation = hourSecurityFormValue(form, "pinConfirmation");
+
+  if (!validateHourPin(pin)) {
+    setHourSecurityError("PIN mora vsebovati natanko šest številk.");
+    return;
+  }
+  if (pin !== pinConfirmation) {
+    setHourSecurityError("Vnesena PIN-a se ne ujemata.");
+    return;
+  }
+
+  setBusy(true);
+  try {
+    const { config, dataKey } = await createHourSecurity({ pin });
+    const profiles = state.hourProfiles.map((profile) =>
+      hourProfileWithMetadata(profile)
+    );
+    const records = await encryptHourProfiles(profiles, dataKey);
+    await saveHourSecurityBundle(config, records);
+    state.hourProfiles = profiles;
+    state.hourSecurity = {
+      ...state.hourSecurity,
+      status: "unlocked",
+      screen: "unlock",
+      config,
+      profileRecords: records,
+      activeKey: dataKey,
+      error: "",
+      failedAttempts: 0,
+      lockoutUntil: 0
+    };
+    clearDirty();
+    render();
+    showToast("Poročila ur so zaščitena in odklenjena.");
+  } catch (error) {
+    console.error(error);
+    setHourSecurityError(error.message || "Zaščite ni bilo mogoče nastaviti.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function unlockHourReports(form) {
+  if (state.hourSecurity.lockoutUntil > Date.now()) {
+    setHourSecurityError("Počakaj do izteka varnostnega premora.");
+    return;
+  }
+  const pin = hourSecurityFormValue(form, "pin");
+  if (!validateHourPin(pin)) {
+    setHourSecurityError("Vnesi šestmestni PIN.");
+    return;
+  }
+
+  setBusy(true);
+  try {
+    const dataKey = await unlockHourDataKey(
+      state.hourSecurity.config,
+      pin
+    );
+    const profiles = await decryptHourProfiles(
+      state.hourSecurity.profileRecords,
+      dataKey
+    );
+    const config =
+      state.hourSecurity.config.recoveryWrap ||
+      state.hourSecurity.config.recoveryQuestion
+        ? await replaceHourPin(state.hourSecurity.config, dataKey, pin)
+        : state.hourSecurity.config;
+    if (config !== state.hourSecurity.config) {
+      await saveHourSecurityBundle(config, state.hourSecurity.profileRecords);
+    }
+    state.hourProfiles = profiles.map((profile) =>
+      createHourProfile(profile.name, profile)
+    );
+    state.hourSecurity = {
+      ...state.hourSecurity,
+      status: "unlocked",
+      screen: "unlock",
+      config,
+      activeKey: dataKey,
+      error: "",
+      failedAttempts: 0,
+      lockoutUntil: 0
+    };
+    render();
+    showToast("Poročila ur so odklenjena.");
+  } catch (error) {
+    const failedAttempts = state.hourSecurity.failedAttempts + 1;
+    if (failedAttempts >= 5) {
+      state.hourSecurity.failedAttempts = 0;
+      state.hourSecurity.lockoutUntil = Date.now() + 30_000;
+      state.hourSecurity.error =
+        "Preveč napačnih poskusov. Poskusi znova čez 30 sekund.";
+    } else {
+      state.hourSecurity.failedAttempts = failedAttempts;
+      state.hourSecurity.error = `${error.message || "PIN ni pravilen."} Preostali poskusi: ${
+        5 - failedAttempts
+      }.`;
+    }
+    render();
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function changeHourPin(form) {
+  const currentPin = hourSecurityFormValue(form, "currentPin");
+  const pin = hourSecurityFormValue(form, "pin");
+  const confirmation = hourSecurityFormValue(form, "pinConfirmation");
+  if (!validateHourPin(currentPin)) {
+    setHourSecurityError("Vnesi trenutni šestmestni PIN.");
+    return;
+  }
+  if (!validateHourPin(pin)) {
+    setHourSecurityError("PIN mora vsebovati natanko šest številk.");
+    return;
+  }
+  if (pin !== confirmation) {
+    setHourSecurityError("Vnesena PIN-a se ne ujemata.");
+    return;
+  }
+
+  setBusy(true);
+  try {
+    const dataKey = await unlockHourDataKey(
+      state.hourSecurity.config,
+      currentPin
+    );
+    await decryptHourProfiles(state.hourSecurity.profileRecords, dataKey);
+    const config = await replaceHourPin(
+      state.hourSecurity.config,
+      dataKey,
+      pin
+    );
+    await saveHourSecurityBundle(config, state.hourSecurity.profileRecords);
+    state.hourSecurity = {
+      ...state.hourSecurity,
+      status: "unlocked",
+      screen: "unlock",
+      config,
+      activeKey: dataKey,
+      error: "",
+      failedAttempts: 0,
+      lockoutUntil: 0
+    };
+    render();
+    showToast("Novi PIN je nastavljen. Poročila ur so odklenjena.");
+  } catch (error) {
+    console.error(error);
+    setHourSecurityError(error.message || "PIN-a ni bilo mogoče spremeniti.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function resetHourSecurity(form) {
+  if (hourSecurityFormValue(form, "confirmation") !== "IZBRIŠI") {
+    setHourSecurityError('Za potrditev napiši "IZBRIŠI".');
+    return;
+  }
+  setBusy(true);
+  try {
+    await clearHourSecurityData(HOUR_SECURITY_ASSET_ID);
+    state.hourProfiles = [];
+    state.hourBatch = null;
+    state.selectedHourReportId = "";
+    state.hourSecurity = {
+      status: "unconfigured",
+      screen: "setup",
+      config: null,
+      profileRecords: [],
+      activeKey: null,
+      error: "",
+      failedAttempts: 0,
+      lockoutUntil: 0
+    };
+    clearDirty();
+    render();
+    showToast("Zaščita in profili Poročil ur so ponastavljeni.");
+  } catch (error) {
+    console.error(error);
+    setHourSecurityError("Ponastavitve ni bilo mogoče dokončati.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+function setHourSecurityScreen(screen) {
+  state.hourSecurity.screen = screen;
+  state.hourSecurity.error = "";
+  render();
+}
+
+async function saveHourProfiles({ silent = false } = {}) {
+  if (!ensureHourReportsUnlocked()) return false;
+  const reports = state.hourBatch?.reports || [];
+  if (!reports.length) {
+    if (!silent) showToast("Po uvozu XLSX lahko shraniš profile urnih postavk.");
+    return false;
+  }
+
+  const profilesById = new Map(
+    state.hourProfiles.map((profile) => [profile.id, profile])
+  );
+  reports.forEach((report) => {
+    profilesById.set(report.profile.id, hourProfileWithMetadata(report.profile));
+  });
+  state.hourProfiles = [...profilesById.values()];
+  const records = await encryptHourProfiles(
+    state.hourProfiles,
+    state.hourSecurity.activeKey
+  );
+  await saveHourSecurityBundle(state.hourSecurity.config, records);
+  state.hourSecurity.profileRecords = records;
+  reports.forEach((report) => {
+    const saved = profilesById.get(report.profile.id);
+    if (saved) report.profile = { ...saved };
+  });
+  clearDirty();
+  render();
+  if (!silent) showToast("Profili urnih postavk in bonusi so shranjeni.");
+  return true;
+}
+
+async function resetHourReports({ skipUnsavedGuard = false } = {}) {
+  if (!ensureHourReportsUnlocked()) return;
+  if (state.dirty && !skipUnsavedGuard) {
+    requestUnsavedChanges({ type: "new" });
+    return;
+  }
+  state.hourBatch = null;
+  state.selectedHourReportId = "";
+  state.toolsPanelOpen = false;
+  clearDirty();
+  render();
+}
+
+async function handleHourReportFile(file) {
+  if (!ensureHourReportsUnlocked()) return;
+  if (state.dirty) {
+    pendingHourReportFile = file;
+    requestUnsavedChanges({ type: "import-hours-file" });
+    return;
+  }
+  if (!/\.xlsx$/i.test(file.name)) {
+    showToast("Izberi Connecteam datoteko v formatu XLSX.");
+    return;
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    showToast("Datoteka XLSX je prevelika. Največja dovoljena velikost je 20 MB.");
+    return;
+  }
+
+  setBusy(true);
+  try {
+    const batch = parseConnecteamWorkbook(
+      await file.arrayBuffer(),
+      file.name,
+      state.hourProfiles
+    );
+    state.hourBatch = batch;
+    state.selectedHourReportId = batch.reports[0]?.id || "";
+    state.toolsPanelOpen = false;
+    markDirty();
+    render();
+    const rejected = batch.rejectedRows.length
+      ? ` ${batch.rejectedRows.length} neveljavnih vrstic je bilo izpuščenih.`
+      : "";
+    showToast(
+      `Uvoženih je ${batch.reports.length} mesečnih poročil za ${new Set(
+        batch.reports.map((report) => report.personName)
+      ).size} osebe.${rejected}`
+    );
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Excel datoteke ni bilo mogoče uvoziti.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+function updateHourProfileField(fieldName, value) {
+  const selected = selectedHourReport();
+  if (!selected) return;
+  const profile = {
+    ...selected.profile,
+    [fieldName]:
+      fieldName === "bonusHours"
+        ? normalizeHours(value)
+        : normalizeRateCents(value)
+  };
+  state.hourBatch.reports = state.hourBatch.reports.map((report) =>
+    report.profile.id === selected.profile.id
+      ? updateReportProfile(report, profile)
+      : report
+  );
+  markDirty();
+}
+
+function updateHourRow(rowId, fieldName, value) {
+  const report = selectedHourReport();
+  const row = report?.rows.find((item) => item.id === rowId);
+  if (!row) return;
+  if (fieldName === "hours") {
+    row.hours = normalizeHours(value);
+  } else if (fieldName === "rateCents") {
+    row.rateCents = normalizeRateCents(value);
+    row.rateOverridden = true;
+  } else {
+    row[fieldName] = value;
+    if (fieldName === "date" && !row.rateOverridden) {
+      const rate = profileRateForDate(report.profile, row.date);
+      row.rateCents = rate;
+      row.originalRateCents = rate;
+    }
+    if (fieldName === "startTime" || fieldName === "endTime") {
+      const calculatedHours = hoursBetweenTimes(row.startTime, row.endTime);
+      if (calculatedHours !== null) row.hours = calculatedHours;
+    }
+  }
+  markDirty();
+}
+
+function resetSelectedHourRow(rowId) {
+  const report = selectedHourReport();
+  const index = report?.rows.findIndex((row) => row.id === rowId) ?? -1;
+  if (!report || index < 0) return;
+  report.rows[index] = resetHourRow(report.rows[index]);
+  markDirty();
+  render();
+}
+
+function includedHourReports() {
+  return (state.hourBatch?.reports || []).filter((report) => report.included);
+}
+
+function validateHourReports(reports) {
+  for (const report of reports) {
+    const errors = validateHourReport(report);
+    if (errors.length) {
+      state.selectedHourReportId = report.id;
+      render();
+      showToast(errors[0]);
+      return false;
+    }
+  }
+  return true;
+}
+
+function hourBatchFileStem() {
+  const reports = includedHourReports();
+  if (!reports.length) return "porocila_ur";
+  const months = [...new Set(reports.map((report) => report.monthKey))].sort();
+  const period =
+    months.length === 1 ? months[0] : `${months[0]}_${months[months.length - 1]}`;
+  return safeFileName(`porocila_ur_${period}`);
+}
+
+async function downloadSelectedHourReport(mode = "download") {
+  if (!ensureHourReportsUnlocked()) return;
+  const report = selectedHourReport();
+  if (!report) {
+    showToast("Najprej uvozi Connecteam datoteko XLSX.");
+    return;
+  }
+  if (!validateHourReports([report])) return;
+  setBusy(true);
+  try {
+    const blob = await createHourReportPdfBlob(report);
+    const fileName = hourReportFileName(report);
+    if (mode === "print") {
+      const url = URL.createObjectURL(blob);
+      const printWindow = window.open(url, "_blank");
+      if (!printWindow) {
+        downloadBlob(blob, fileName);
+        showToast("Brskalnik je blokiral tiskanje, zato sem prenesel poročilo PDF.");
+      } else {
+        printWindow.addEventListener("load", () => printWindow.print(), { once: true });
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        showToast("Poročilo je pripravljeno za tiskanje.");
+      }
+    } else {
+      downloadBlob(blob, fileName);
+      showToast("Poročilo PDF je pripravljeno.");
+    }
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function downloadAllHourReports() {
+  if (!ensureHourReportsUnlocked()) return;
+  const reports = includedHourReports();
+  if (!reports.length) {
+    showToast("Za skupni izvoz izberi vsaj eno osebo.");
+    return;
+  }
+  if (!validateHourReports(reports)) return;
+  setBusy(true);
+  try {
+    downloadBlob(
+      await createHourReportsPdfBlob(reports),
+      `${hourBatchFileStem()}.pdf`
+    );
+    showToast(`Združeni PDF vsebuje ${reports.length} poročil.`);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function downloadHourReportsZip() {
+  if (!ensureHourReportsUnlocked()) return;
+  const reports = includedHourReports();
+  if (!reports.length) {
+    showToast("Za ZIP izvoz izberi vsaj eno osebo.");
+    return;
+  }
+  if (!window.JSZip) {
+    showToast("Knjižnica za ZIP ni naložena.");
+    return;
+  }
+  if (!validateHourReports(reports)) return;
+  setBusy(true);
+  try {
+    const zip = new window.JSZip();
+    for (const report of reports) {
+      zip.file(hourReportFileName(report), await createHourReportPdfBlob(report));
+    }
+    downloadBlob(
+      await zip.generateAsync({ type: "blob" }),
+      `${hourBatchFileStem()}.zip`
+    );
+    showToast(`ZIP vsebuje ${reports.length} ločenih poročil.`);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function bindHourReportDropzone() {
+  const dropzone = document.querySelector("[data-hour-import-dropzone]");
+  if (!dropzone) return;
+  const setDragging = (event, dragging) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dropzone.classList.toggle("is-dragging", dragging);
+  };
+  dropzone.addEventListener("dragenter", (event) => setDragging(event, true));
+  dropzone.addEventListener("dragover", (event) => setDragging(event, true));
+  dropzone.addEventListener("dragleave", (event) => setDragging(event, false));
+  dropzone.addEventListener("drop", async (event) => {
+    setDragging(event, false);
+    const [file] = event.dataTransfer?.files || [];
+    if (file) await handleHourReportFile(file);
+  });
+}
+
+function bindHourReportEvents() {
+  document
+    .querySelector("[data-hour-security-setup]")
+    ?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void setupHourSecurity(event.currentTarget);
+    });
+  document
+    .querySelector("[data-hour-security-unlock]")
+    ?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void unlockHourReports(event.currentTarget);
+    });
+  document
+    .querySelector("[data-hour-security-change-pin]")
+    ?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void changeHourPin(event.currentTarget);
+    });
+  document
+    .querySelector("[data-hour-security-reset]")
+    ?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void resetHourSecurity(event.currentTarget);
+    });
+  document.querySelectorAll("[data-hour-security-action]").forEach((button) => {
+    button.addEventListener("click", () =>
+      setHourSecurityScreen(button.dataset.hourSecurityAction)
+    );
+  });
+  document.querySelectorAll("[data-modal-window]").forEach((modal) => {
+    modal.addEventListener("click", (event) => event.stopPropagation());
+  });
+
+  if (!hourReportsUnlocked()) {
+    bindEvidenceNavigationEvents();
+    window.setTimeout(() => {
+      document.querySelector("[data-hour-security-autofocus]")?.focus();
+    }, 0);
+    return;
+  }
+
+  document.querySelectorAll("[data-action]").forEach((button) => {
+    button.addEventListener("click", () => handleAction(button.dataset.action));
+  });
+  document.getElementById("hourReportInput")?.addEventListener("change", async (event) => {
+    const [file] = event.currentTarget.files || [];
+    event.currentTarget.value = "";
+    if (file) await handleHourReportFile(file);
+  });
+  bindHourReportDropzone();
+
+  document.querySelectorAll("[data-select-hour-report]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedHourReportId = button.dataset.selectHourReport;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-hour-report-included]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const report = state.hourBatch?.reports.find(
+        (item) => item.id === checkbox.dataset.hourReportIncluded
+      );
+      if (!report) return;
+      report.included = checkbox.checked;
+      markDirty();
+      render();
+    });
+  });
+  document.querySelectorAll("[data-hour-profile-field]").forEach((input) => {
+    input.addEventListener("change", () => {
+      updateHourProfileField(input.dataset.hourProfileField, input.value);
+      render();
+    });
+  });
+  document.querySelectorAll("[data-hour-row]").forEach((rowElement) => {
+    rowElement.querySelectorAll("[data-hour-row-field]").forEach((input) => {
+      input.addEventListener("change", () => {
+        updateHourRow(
+          rowElement.dataset.hourRow,
+          input.dataset.hourRowField,
+          input.value
+        );
+        render();
+      });
+    });
+  });
+  document.querySelectorAll("[data-reset-hour-row]").forEach((button) => {
+    button.addEventListener("click", () => resetSelectedHourRow(button.dataset.resetHourRow));
+  });
+  bindEvidenceNavigationEvents();
+}
+
 function bindEvidenceNavigationEvents() {
   document.querySelectorAll("[data-evidence-target]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -3238,6 +4015,18 @@ function handleOnboardingAction(action) {
 
 function handleKeyboardShortcut(event) {
   if (event.defaultPrevented || event.repeat || event.isComposing) return;
+  if (
+    event.key === "Escape" &&
+    state.documentType === "hourReports" &&
+    state.hourSecurity.status !== "reset-required" &&
+    ["change-pin", "reset-confirm", "reset-final"].includes(state.hourSecurity.screen)
+  ) {
+    event.preventDefault();
+    state.hourSecurity.screen = state.hourSecurity.config ? "unlock" : "setup";
+    state.hourSecurity.error = "";
+    render();
+    return;
+  }
   if (event.key === "Escape" && state.evidenceMenuOpen) {
     event.preventDefault();
     state.evidenceMenuOpen = false;
@@ -3978,11 +4767,29 @@ async function handleAction(action) {
       stopOnboardingCalculatorDemo({ restore: true });
     }
 
+    if (
+      state.documentType === "hourReports" &&
+      [
+        "new",
+        "save",
+        "import-hours",
+        "download",
+        "print",
+        "download-all-hours",
+        "download-hours-zip"
+      ].includes(action) &&
+      !ensureHourReportsUnlocked()
+    ) {
+      return;
+    }
+
     if (action === "new") {
       if (state.documentType === "materialIssue") {
         await newMaterialIssue();
       } else if (state.documentType === "attendance") {
         await newAttendanceSheet();
+      } else if (state.documentType === "hourReports") {
+        await resetHourReports();
       } else {
         await newDocument();
       }
@@ -3991,6 +4798,8 @@ async function handleAction(action) {
         await saveCurrentMaterialIssue();
       } else if (state.documentType === "attendance") {
         await saveCurrentAttendanceSheet();
+      } else if (state.documentType === "hourReports") {
+        await saveHourProfiles();
       } else {
         await saveCurrentDocument();
       }
@@ -4001,6 +4810,12 @@ async function handleAction(action) {
         requestUnsavedChanges({ type: "import-attendance" });
       } else {
         document.getElementById("attendanceCsvInput")?.click();
+      }
+    } else if (action === "import-hours") {
+      if (state.dirty) {
+        requestUnsavedChanges({ type: "import-hours" });
+      } else {
+        document.getElementById("hourReportInput")?.click();
       }
     } else if (action === "upload-signature") {
       document.getElementById("signatureInput")?.click();
@@ -4031,6 +4846,8 @@ async function handleAction(action) {
         await exportMaterialIssuePdf("download");
       } else if (state.documentType === "attendance") {
         await exportAttendanceSheetPdf("download");
+      } else if (state.documentType === "hourReports") {
+        await downloadSelectedHourReport("download");
       } else {
         await exportPdf("download");
       }
@@ -4039,9 +4856,15 @@ async function handleAction(action) {
         await exportMaterialIssuePdf("print");
       } else if (state.documentType === "attendance") {
         await exportAttendanceSheetPdf("print");
+      } else if (state.documentType === "hourReports") {
+        await downloadSelectedHourReport("print");
       } else {
         await exportPdf("print");
       }
+    } else if (action === "download-all-hours") {
+      await downloadAllHourReports();
+    } else if (action === "download-hours-zip") {
+      await downloadHourReportsZip();
     } else if (action === "add-material-row") {
       addMaterialRow();
     } else if (action === "add-attendance-participant") {
@@ -4150,6 +4973,8 @@ async function continueUnsavedAction() {
       await newMaterialIssue({ skipUnsavedGuard: true });
     } else if (state.documentType === "attendance") {
       await newAttendanceSheet({ skipUnsavedGuard: true });
+    } else if (state.documentType === "hourReports") {
+      await resetHourReports({ skipUnsavedGuard: true });
     } else {
       await newDocument({ skipUnsavedGuard: true });
     }
@@ -4168,6 +4993,15 @@ async function continueUnsavedAction() {
     const file = pendingAttendanceFile;
     pendingAttendanceFile = null;
     if (file) await handleAttendanceCsvFile(file);
+  } else if (action.type === "import-hours") {
+    clearDirty();
+    render();
+    document.getElementById("hourReportInput")?.click();
+  } else if (action.type === "import-hours-file") {
+    const file = pendingHourReportFile;
+    pendingHourReportFile = null;
+    clearDirty();
+    if (file) await handleHourReportFile(file);
   } else if (action.type === "delete") {
     openDeleteConfirm(action.proposalId, { skipUnsavedGuard: true });
   } else if (action.type === "switch-document") {
@@ -4401,6 +5235,15 @@ async function switchDocumentType({ skipUnsavedGuard = false, target = "" } = {}
   if (state.dirty && !skipUnsavedGuard) {
     requestUnsavedChanges({ type: "switch-document", target: nextType });
     return;
+  }
+
+  if (
+    state.documentType === "hourReports" &&
+    state.dirty &&
+    skipUnsavedGuard
+  ) {
+    state.hourBatch = null;
+    state.selectedHourReportId = "";
   }
 
   if (nextType === "proposal") {
@@ -4783,16 +5626,67 @@ async function clearLocalPreviewServiceWorker() {
 
 async function init() {
   await deleteOrphanAttachments();
-  const [proposals, materialIssues, attendanceSheets, signatureAsset, attendanceCategoryAsset] = await Promise.all([
+  const [
+    proposals,
+    materialIssues,
+    attendanceSheets,
+    hourProfiles,
+    signatureAsset,
+    attendanceCategoryAsset,
+    hourSecurityAsset
+  ] = await Promise.all([
     getAllProposals(),
     getAllMaterialIssues(),
     getAllAttendanceSheets(),
+    getAllHourProfiles(),
     getAsset(SIGNATURE_ASSET_ID),
-    getAsset(ATTENDANCE_CATEGORY_ASSET_ID)
+    getAsset(ATTENDANCE_CATEGORY_ASSET_ID),
+    getAsset(HOUR_SECURITY_ASSET_ID)
   ]);
   state.proposals = sortRecent(proposals);
   state.materialIssues = sortRecent(materialIssues);
   state.attendanceSheets = sortRecent(attendanceSheets);
+  const encryptedHourProfiles = hourProfiles.filter(isEncryptedHourProfileRecord);
+  if (hourSecurityAsset && encryptedHourProfiles.length === hourProfiles.length) {
+    state.hourProfiles = [];
+    state.hourSecurity = {
+      ...state.hourSecurity,
+      status: "locked",
+      screen: "unlock",
+      config: hourSecurityAsset,
+      profileRecords: encryptedHourProfiles,
+      activeKey: null,
+      error: ""
+    };
+  } else if (
+    encryptedHourProfiles.length ||
+    (hourSecurityAsset && encryptedHourProfiles.length !== hourProfiles.length)
+  ) {
+    state.hourProfiles = [];
+    state.hourSecurity = {
+      ...state.hourSecurity,
+      status: "reset-required",
+      screen: "reset-confirm",
+      config: null,
+      profileRecords: encryptedHourProfiles,
+      activeKey: null,
+      error:
+        "Varnostni podatki niso popolni. Profile Poročil ur je mogoče samo varno ponastaviti."
+    };
+  } else {
+    state.hourProfiles = hourProfiles.map((profile) =>
+      createHourProfile(profile.name, profile)
+    );
+    state.hourSecurity = {
+      ...state.hourSecurity,
+      status: "unconfigured",
+      screen: "setup",
+      config: null,
+      profileRecords: [],
+      activeKey: null,
+      error: ""
+    };
+  }
   state.attendanceCategories = normalizeAttendanceCategories(attendanceCategoryAsset?.categories || []);
   setSignatureAsset(signatureAsset);
   const last = state.proposals[0];

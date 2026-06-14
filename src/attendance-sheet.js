@@ -1,7 +1,7 @@
 import { DEFAULTS, generateId, todayIso } from "./utils.js";
 
 export const ATTENDANCE_CATEGORY_ASSET_ID = "attendance-categories";
-export const ATTENDANCE_ROWS_PER_PAGE = 12;
+export const ATTENDANCE_ROWS_PER_PAGE = 16;
 
 export const DEFAULT_ATTENDANCE_CATEGORIES = Object.freeze([
   {

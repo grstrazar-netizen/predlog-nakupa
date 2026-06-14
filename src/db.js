@@ -1,9 +1,10 @@
 const DB_NAME = "predlog-nakupa-db";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const STORES = {
   proposals: "proposals",
   materialIssues: "materialIssues",
   attendanceSheets: "attendanceSheets",
+  hourProfiles: "hourProfiles",
   attachments: "attachments",
   assets: "assets"
 };
@@ -51,6 +52,12 @@ export function openDatabase() {
       if (!db.objectStoreNames.contains(STORES.attendanceSheets)) {
         const store = db.createObjectStore(STORES.attendanceSheets, { keyPath: "id" });
         store.createIndex("eventDate", "eventDate", { unique: false });
+        store.createIndex("updatedAt", "updatedAt", { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains(STORES.hourProfiles)) {
+        const store = db.createObjectStore(STORES.hourProfiles, { keyPath: "id" });
+        store.createIndex("name", "name", { unique: false });
         store.createIndex("updatedAt", "updatedAt", { unique: false });
       }
 
@@ -137,6 +144,43 @@ export async function deleteAttendanceSheet(id) {
   const tx = db.transaction(STORES.attendanceSheets, "readwrite");
   tx.objectStore(STORES.attendanceSheets).delete(id);
   await transactionDone(tx);
+}
+
+export async function getAllHourProfiles() {
+  const db = await openDatabase();
+  return requestToPromise(
+    db.transaction(STORES.hourProfiles).objectStore(STORES.hourProfiles).getAll()
+  );
+}
+
+export async function saveHourProfile(profile) {
+  const db = await openDatabase();
+  const tx = db.transaction(STORES.hourProfiles, "readwrite");
+  tx.objectStore(STORES.hourProfiles).put(profile);
+  await transactionDone(tx);
+  return profile;
+}
+
+export async function saveHourSecurityBundle(securityAsset, encryptedProfiles) {
+  if (!securityAsset?.id) throw new Error("Varnostna nastavitev nima identifikatorja.");
+  const db = await openDatabase();
+  const tx = db.transaction([STORES.assets, STORES.hourProfiles], "readwrite");
+  const done = transactionDone(tx);
+  const profileStore = tx.objectStore(STORES.hourProfiles);
+  tx.objectStore(STORES.assets).put(securityAsset);
+  profileStore.clear();
+  (encryptedProfiles || []).forEach((profile) => profileStore.put(profile));
+  await done;
+  return securityAsset;
+}
+
+export async function clearHourSecurityData(securityAssetId) {
+  const db = await openDatabase();
+  const tx = db.transaction([STORES.assets, STORES.hourProfiles], "readwrite");
+  const done = transactionDone(tx);
+  tx.objectStore(STORES.hourProfiles).clear();
+  if (securityAssetId) tx.objectStore(STORES.assets).delete(securityAssetId);
+  await done;
 }
 
 export async function saveProposalBundle(proposal, { attachment = null, deleteAttachmentIds = [] } = {}) {

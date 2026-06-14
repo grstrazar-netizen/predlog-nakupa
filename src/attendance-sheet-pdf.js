@@ -163,8 +163,8 @@ function drawHeader(page, pdf, logo, sheet, categories, pageNumber, pageCount, f
 function drawParticipantTable(page, participants, offset, fonts, colors) {
   const right = PAGE.width - PAGE.margin;
   const tableTop = 184;
-  const headerHeight = 27;
-  const rowHeight = 26;
+  const headerHeight = 24;
+  const rowHeight = 19;
   const columns = [
     { key: "index", label: "Št.", width: 34, align: "center" },
     { key: "firstName", label: "Ime", width: 120 },
@@ -198,7 +198,7 @@ function drawParticipantTable(page, participants, offset, fonts, colors) {
       column.align === "center"
         ? x + (column.width - textWidth) / 2
         : x + 7;
-    drawText(page, column.label, textX, tableTop + 9, {
+    drawText(page, column.label, textX, tableTop + 8, {
       font: fonts.semibold,
       size: 8.2,
       color: colors.black
@@ -230,7 +230,7 @@ function drawParticipantTable(page, participants, offset, fonts, colors) {
         column.align === "center"
           ? cellX + (column.width - textWidth) / 2
           : cellX + 7;
-      drawText(page, visibleValue, textX, rowTop + 8, {
+      drawText(page, visibleValue, textX, rowTop + 5.5, {
         font: fonts.regular,
         size: 9,
         color: colors.black
