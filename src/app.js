@@ -71,6 +71,7 @@ import {
   ATTENDANCE_CATEGORY_ASSET_ID,
   ATTENDANCE_ROWS_PER_PAGE,
   DEFAULT_ATTENDANCE_CATEGORIES,
+  attendanceVisibleRowCount,
   attendanceSheetFromImportGroup,
   attendanceSheetWithSaveMetadata,
   attendanceStatistics,
@@ -1685,6 +1686,10 @@ function attendanceParticipantMarkup(participant, displayIndex) {
 
 function renderAttendancePage(sheet, participants, pageIndex, pageCount) {
   const offset = pageIndex * ATTENDANCE_ROWS_PER_PAGE;
+  const visibleRowCount = attendanceVisibleRowCount(
+    sheet.participants?.length,
+    participants.length
+  );
   const editableHeader = pageIndex === 0;
   const metadata = editableHeader
     ? `
@@ -1784,7 +1789,7 @@ function renderAttendancePage(sheet, participants, pageIndex, pageCount) {
           <tbody>
             ${participants.map((participant, index) => attendanceParticipantMarkup(participant, offset + index + 1)).join("")}
             ${Array.from(
-              { length: Math.max(0, ATTENDANCE_ROWS_PER_PAGE - participants.length) },
+              { length: Math.max(0, visibleRowCount - participants.length) },
               (_, index) => `
                 <tr class="attendance-placeholder-row" aria-hidden="true">
                   <td>${offset + participants.length + index + 1}</td>

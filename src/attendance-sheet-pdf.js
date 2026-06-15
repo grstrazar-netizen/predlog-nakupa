@@ -1,5 +1,6 @@
 import { DOCUMENT_FONT_FILES } from "./document-layout.js";
 import {
+  attendanceVisibleRowCount,
   ATTENDANCE_ROWS_PER_PAGE,
   photoConsentLabel
 } from "./attendance-sheet.js";
@@ -160,7 +161,7 @@ function drawHeader(page, pdf, logo, sheet, categories, pageNumber, pageCount, f
   drawMetaItem(page, "Lokacija", sheet.location, 520, 143, 280, fonts, colors);
 }
 
-function drawParticipantTable(page, participants, offset, fonts, colors) {
+function drawParticipantTable(page, participants, offset, totalParticipants, fonts, colors) {
   const right = PAGE.width - PAGE.margin;
   const tableTop = 184;
   const headerHeight = 24;
@@ -178,7 +179,11 @@ function drawParticipantTable(page, participants, offset, fonts, colors) {
       align: "center"
     }
   ];
-  const tableBottom = tableTop + headerHeight + ATTENDANCE_ROWS_PER_PAGE * rowHeight;
+  const visibleRowCount = attendanceVisibleRowCount(
+    totalParticipants,
+    participants.length
+  );
+  const tableBottom = tableTop + headerHeight + visibleRowCount * rowHeight;
 
   page.drawRectangle({
     x: PAGE.margin,
@@ -207,7 +212,7 @@ function drawParticipantTable(page, participants, offset, fonts, colors) {
   });
   drawVerticalLine(page, right, tableTop, tableBottom, colors.grid, 0.55);
 
-  for (let index = 0; index < ATTENDANCE_ROWS_PER_PAGE; index += 1) {
+  for (let index = 0; index < visibleRowCount; index += 1) {
     const rowTop = tableTop + headerHeight + index * rowHeight;
     drawLine(page, PAGE.margin, right, rowTop + rowHeight, colors.grid, 0.45);
     const participant = participants[index];
@@ -266,6 +271,7 @@ export async function createAttendanceSheetPdfBlob(sheet, categories = []) {
       page,
       participants.slice(offset, offset + ATTENDANCE_ROWS_PER_PAGE),
       offset,
+      participants.length,
       fonts,
       colors
     );

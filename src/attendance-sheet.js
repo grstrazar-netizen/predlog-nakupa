@@ -2,6 +2,13 @@ import { DEFAULTS, generateId, todayIso } from "./utils.js";
 
 export const ATTENDANCE_CATEGORY_ASSET_ID = "attendance-categories";
 export const ATTENDANCE_ROWS_PER_PAGE = 16;
+export const ATTENDANCE_MIN_ROWS = 8;
+
+export function attendanceVisibleRowCount(totalParticipants, participantsOnPage) {
+  const total = Math.max(0, Number(totalParticipants) || 0);
+  const onPage = Math.max(0, Number(participantsOnPage) || 0);
+  return total <= ATTENDANCE_MIN_ROWS ? ATTENDANCE_MIN_ROWS : onPage;
+}
 
 export const DEFAULT_ATTENDANCE_CATEGORIES = Object.freeze([
   {

@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ATTENDANCE_MIN_ROWS,
   ATTENDANCE_ROWS_PER_PAGE,
+  attendanceVisibleRowCount,
   attendanceSheetFromImportGroup,
   attendanceStatistics,
   attendanceSuggestions,
@@ -16,8 +18,16 @@ import {
   validateAttendanceSheet
 } from "../src/attendance-sheet.js";
 
-test("keeps sixteen compact signature rows on each landscape page", () => {
+test("supports sixteen imported participants per landscape page", () => {
   assert.equal(ATTENDANCE_ROWS_PER_PAGE, 16);
+});
+
+test("shows eight empty places and expands only to actual participants", () => {
+  assert.equal(ATTENDANCE_MIN_ROWS, 8);
+  assert.equal(attendanceVisibleRowCount(0, 0), 8);
+  assert.equal(attendanceVisibleRowCount(4, 4), 8);
+  assert.equal(attendanceVisibleRowCount(12, 12), 12);
+  assert.equal(attendanceVisibleRowCount(17, 1), 1);
 });
 
 const sampleCsv = `email,event,start_time,start_day,name,surname,question 0,question 0
