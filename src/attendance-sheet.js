@@ -232,7 +232,14 @@ export function parseWagtailAttendanceCsv(text, fileName = "") {
   }
 
   const indexes = csvHeaderIndexes(parsed.rows[0]);
-  const groups = new Map();
+  const group = {
+    key: "current-event",
+    programName: "",
+    eventDate: "",
+    eventTime: "",
+    sourceFileName: normalizedText(fileName),
+    participants: []
+  };
   parsed.rows.slice(1).forEach((row) => {
     const programName = normalizedText(row[indexes.event]);
     const eventDate = normalizedText(row[indexes.start_day]).slice(0, 10);
@@ -246,28 +253,17 @@ export function parseWagtailAttendanceCsv(text, fileName = "") {
         : normalizePhotoConsent(row[indexes.allow_photos]);
     if (![programName, eventDate, eventTime, firstName, lastName, email].some(Boolean)) return;
 
-    const key = [normalizedSearch(programName), eventDate, eventTime].join("|");
-    if (!groups.has(key)) {
-      groups.set(key, {
-        key,
-        programName,
-        eventDate,
-        eventTime,
-        sourceFileName: normalizedText(fileName),
-        participants: []
-      });
-    }
-    groups.get(key).participants.push(
+    if (!group.programName && programName) group.programName = programName;
+    if (!group.eventDate && eventDate) group.eventDate = eventDate;
+    if (!group.eventTime && eventTime) group.eventTime = eventTime;
+    group.participants.push(
       createAttendanceParticipant({ firstName, lastName, email, photoConsent })
     );
   });
 
-  const result = [...groups.values()].map((group) => ({
-    ...group,
-    participants: markDuplicateEmails(group.participants)
-  }));
-  if (!result.length) throw new Error("CSV datoteka ne vsebuje udeležencev.");
-  return result;
+  group.participants = markDuplicateEmails(group.participants);
+  if (!group.participants.length) throw new Error("CSV datoteka ne vsebuje udeležencev.");
+  return [group];
 }
 
 export function attendanceSheetFromImportGroup(group, defaults = {}) {

@@ -2,7 +2,7 @@ import { DOCUMENT_FONT_FILES } from "./document-layout.js";
 import {
   attendanceVisibleRowCount,
   ATTENDANCE_ROWS_PER_PAGE,
-  photoConsentLabel
+  normalizePhotoConsent
 } from "./attendance-sheet.js";
 import { formatSlovenianDate } from "./utils.js";
 
@@ -102,6 +102,49 @@ function drawVerticalLine(page, x, top, bottom, color, thickness = 0.6) {
     end: { x, y: yFromTop(bottom) },
     color,
     thickness
+  });
+}
+
+function drawPhotoConsentMark(page, value, centerX, centerTop, colors) {
+  const consent = normalizePhotoConsent(value);
+  const centerY = yFromTop(centerTop);
+  if (consent === true) {
+    page.drawLine({
+      start: { x: centerX - 5, y: centerY },
+      end: { x: centerX - 1.5, y: centerY - 4 },
+      color: colors.black,
+      thickness: 1.1
+    });
+    page.drawLine({
+      start: { x: centerX - 1.5, y: centerY - 4 },
+      end: { x: centerX + 6, y: centerY + 5 },
+      color: colors.black,
+      thickness: 1.1
+    });
+    return;
+  }
+
+  if (consent === false) {
+    page.drawLine({
+      start: { x: centerX - 5, y: centerY - 5 },
+      end: { x: centerX + 5, y: centerY + 5 },
+      color: colors.black,
+      thickness: 1
+    });
+    page.drawLine({
+      start: { x: centerX - 5, y: centerY + 5 },
+      end: { x: centerX + 5, y: centerY - 5 },
+      color: colors.black,
+      thickness: 1
+    });
+    return;
+  }
+
+  page.drawLine({
+    start: { x: centerX - 5, y: centerY },
+    end: { x: centerX + 5, y: centerY },
+    color: colors.muted,
+    thickness: 0.8
   });
 }
 
@@ -224,11 +267,22 @@ function drawParticipantTable(page, participants, offset, totalParticipants, fon
       participant.lastName,
       participant.email,
       "",
-      photoConsentLabel(participant.photoConsent)
+      participant.photoConsent
     ];
     let cellX = PAGE.margin;
     values.forEach((value, columnIndex) => {
       const column = columns[columnIndex];
+      if (column.key === "photoConsent") {
+        drawPhotoConsentMark(
+          page,
+          value,
+          cellX + column.width / 2,
+          rowTop + rowHeight / 2,
+          colors
+        );
+        cellX += column.width;
+        return;
+      }
       const visibleValue = ellipsize(value, fonts.regular, 9, column.width - 14);
       const textWidth = fonts.regular.widthOfTextAtSize(visibleValue, 9);
       const textX =

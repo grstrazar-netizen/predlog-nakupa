@@ -58,14 +58,14 @@ function validSheet(overrides = {}) {
   };
 }
 
-test("parses quoted Wagtail CSV and groups participants by event, day and time", () => {
+test("parses quoted Wagtail CSV into one current event attendance sheet", () => {
   const groups = parseWagtailAttendanceCsv(sampleCsv, "export.csv");
-  assert.equal(groups.length, 2);
+  assert.equal(groups.length, 1);
   assert.equal(groups[0].programName, "Zunanje kovinsko kurišče");
   assert.equal(groups[0].eventDate, "2026-06-10");
   assert.equal(groups[0].eventTime, "17:00");
-  assert.equal(groups[0].participants.length, 2);
-  assert.equal(groups[1].participants[1].lastName, "Horvat");
+  assert.equal(groups[0].participants.length, 4);
+  assert.equal(groups[0].participants[3].lastName, "Horvat");
 });
 
 test("supports semicolon CSV and strips a UTF-8 BOM", () => {
@@ -102,6 +102,13 @@ ana@example.com,Delavnica,09:00,2026-06-15,Ana,Novak`;
   const [group] = parseWagtailAttendanceCsv(csv);
   assert.equal(group.participants.length, 2);
   assert.equal(group.participants.every((participant) => participant.duplicateEmail), true);
+});
+
+test("keeps one import group even when rows contain different Wagtail event metadata", () => {
+  const groups = parseWagtailAttendanceCsv(sampleCsv, "export.csv");
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].programName, "Zunanje kovinsko kurišče");
+  assert.equal(groups[0].participants.map((participant) => participant.firstName).join(", "), "Ana, Bor, Cilka, David");
 });
 
 test("validates metadata, participant names and email format", () => {
@@ -141,7 +148,7 @@ test("creates an attendance sheet from an import group and supplied defaults", (
   });
   assert.equal(sheet.categoryId, "workshop");
   assert.equal(sheet.mentorName, "Gregor Stražar");
-  assert.equal(sheet.participants.length, 2);
+  assert.equal(sheet.participants.length, 4);
 });
 
 test("returns at most three closest remembered values", () => {
