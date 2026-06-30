@@ -871,13 +871,24 @@ function renderProposalPreviewModal() {
         <div class="modal-body proposal-preview-body">
           <main class="proposal-preview-main" aria-label="${isEditMode ? "Urejanje dokumenta" : "Predogled dokumenta"}">
             <div class="proposal-preview-viewer-toolbar" aria-label="Orodja predogleda PDF">
-              <div>
-                <button class="button button-icon-only button-ghost" type="button" data-action="zoom-proposal-preview-out" aria-label="Pomanjšaj predogled">${icon("minus")}</button>
-                <strong>${escapeHtml(zoomLabel)}</strong>
-                <button class="button button-icon-only button-ghost" type="button" data-action="zoom-proposal-preview-in" aria-label="Povečaj predogled">${icon("plus")}</button>
+              <div class="proposal-preview-toolbar-tools">
+                <span class="proposal-preview-zoom-group">
+                  <button class="button button-icon-only button-ghost" type="button" data-action="zoom-proposal-preview-out" aria-label="Pomanjšaj predogled">${icon("minus")}</button>
+                  <strong>${escapeHtml(zoomLabel)}</strong>
+                  <button class="button button-icon-only button-ghost" type="button" data-action="zoom-proposal-preview-in" aria-label="Povečaj predogled">${icon("plus")}</button>
+                </span>
+                <button class="button button-outline proposal-fit-button" type="button" data-action="fit-proposal-preview">${icon("maximize-2")} Fit width</button>
+                <span class="proposal-page-indicator">Stran 1 / 1</span>
               </div>
-              <button class="button button-outline proposal-fit-button" type="button" data-action="fit-proposal-preview">${icon("maximize-2")} Fit width</button>
-              <span class="proposal-page-indicator">Stran 1 / 1</span>
+              <div class="proposal-preview-toolbar-actions">
+                ${
+                  isEditMode
+                    ? `<button class="button button-solid" type="button" data-action="save-proposal-preview">${icon("save")} Shrani spremembe</button>
+                      <button class="button button-outline" type="button" data-action="finish-proposal-preview-edit">${icon("arrow-left")} Predogled</button>`
+                    : `<button class="button button-solid" type="button" data-action="edit-proposal-preview">${icon("pencil")} Uredi dokument</button>
+                      <button class="button button-outline" type="button" data-action="download-preview-proposal">${icon("download")} Export PDF</button>`
+                }
+              </div>
             </div>
             <div class="proposal-preview-document${isEditMode ? " is-editing" : ""}" style="${documentLayoutCssVariables()}">
               <div class="paper-frame proposal-preview-paper-frame" style="--proposal-preview-scale:${zoom}">
@@ -886,29 +897,13 @@ function renderProposalPreviewModal() {
             </div>
           </main>
           <aside class="proposal-preview-side" aria-label="Podatki in dejanja dokumenta">
+            ${renderProposalAttachmentPreview(attachment, state.proposalPreviewAttachmentUrl, { editable: isEditMode })}
             <section class="proposal-preview-section">
               <div class="proposal-preview-section-head">
                 <h3>${icon("circle-dot")} Status</h3>
               </div>
               <span class="proposal-status-badge proposal-status-badge-${escapeHtml(statusTone)}">${escapeHtml(status.label)}</span>
             </section>
-            <section class="proposal-preview-section">
-              <div class="proposal-preview-section-head">
-                <h3>${icon("zap")} Hitre akcije</h3>
-              </div>
-              <div class="proposal-quick-actions">
-                ${
-                  isEditMode
-                    ? `<button class="button button-solid" type="button" data-action="save-proposal-preview">${icon("save")} Shrani spremembe</button>
-                      <button class="button button-outline" type="button" data-action="finish-proposal-preview-edit">${icon("arrow-left")} Nazaj na predogled</button>`
-                    : `<button class="button button-solid" type="button" data-action="edit-proposal-preview">${icon("pencil")} Uredi dokument</button>
-                      <button class="button button-outline" type="button" data-action="download-preview-proposal">${icon("download")} Export PDF</button>
-                      <button class="button button-outline" type="button" data-action="duplicate-proposal-preview">${icon("copy")} Podvoji</button>
-                      <button class="button button-ghost proposal-danger-action" type="button" data-action="delete-proposal-preview">${icon("trash-2")} Izbriši</button>`
-                }
-              </div>
-            </section>
-            ${renderProposalAttachmentPreview(attachment, state.proposalPreviewAttachmentUrl, { editable: isEditMode })}
             <section class="proposal-preview-section proposal-change-card">
               <div class="proposal-preview-section-head">
                 <h3>${icon("git-commit-vertical")} Zgodovina</h3>
