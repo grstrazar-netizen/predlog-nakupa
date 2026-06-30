@@ -435,6 +435,83 @@ export function proposalWithSaveMetadata(proposal, proposals) {
   };
 }
 
+const PROPOSAL_CHANGE_FIELDS = [
+  ["fullName", "Ime in priimek"],
+  ["jobTitle", "Delovno mesto"],
+  ["purpose", "Namen nakupa"],
+  ["explanation", "Obrazložitev"],
+  ["company", "Podjetje"],
+  ["estimatedValueCents", "Okvirna vrednost"],
+  ["issueDate", "Datum izdaje"],
+  ["accountingNumber", "Številka računovodstva"],
+  ["documentStatus", "Status"]
+];
+
+function normalizeChangeValue(value) {
+  if (value === null || value === undefined) return "";
+  return String(value).trim().replace(/\s+/g, " ");
+}
+
+export function proposalWithChangeLog(proposal, previousProposal, now = new Date().toISOString()) {
+  const existingLog = Array.isArray(previousProposal?.changeLog)
+    ? previousProposal.changeLog
+    : Array.isArray(proposal.changeLog)
+      ? proposal.changeLog
+      : [];
+
+  if (!previousProposal) {
+    return {
+      ...proposal,
+      changeLog: [
+        ...existingLog,
+        {
+          id: generateId("change"),
+          createdAt: now,
+          type: "created",
+          summary: "Dokument je bil ustvarjen.",
+          fields: []
+        }
+      ]
+    };
+  }
+
+  const changes = PROPOSAL_CHANGE_FIELDS.map(([field, label]) => {
+    const before = field === "estimatedValueCents" ? Number(previousProposal[field] || 0) : normalizeChangeValue(previousProposal[field]);
+    const after = field === "estimatedValueCents" ? Number(proposal[field] || 0) : normalizeChangeValue(proposal[field]);
+    return before !== after
+      ? {
+          field,
+          label,
+          before,
+          after
+        }
+      : null;
+  }).filter(Boolean);
+  const changedFields = changes.map((change) => change.label);
+
+  if (!changedFields.length) {
+    return {
+      ...proposal,
+      changeLog: existingLog
+    };
+  }
+
+  return {
+    ...proposal,
+    changeLog: [
+      ...existingLog,
+      {
+        id: generateId("change"),
+        createdAt: now,
+        type: "updated",
+        summary: `Spremenjena polja: ${changedFields.join(", ")}.`,
+        fields: changedFields,
+        changes
+      }
+    ]
+  };
+}
+
 export function spendingForYear(proposals, year) {
   return proposals
     .filter((proposal) => Number(proposal.year) === Number(year) && proposal.documentStatus !== "rejected")

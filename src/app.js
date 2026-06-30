@@ -11,6 +11,7 @@ import {
   normalizeSignaturePlacement,
   normalizeLabCode,
   parseMoneyToCents,
+  proposalWithChangeLog,
   proposalWithSaveMetadata,
   safeFileName,
   sortRecent,
@@ -148,6 +149,11 @@ const state = {
   signatureAsset: null,
   signatureUrl: "",
   historyModalOpen: false,
+  proposalPreviewId: "",
+  proposalPreviewMode: "view",
+  proposalPreviewZoom: 0.82,
+  proposalPreviewAttachment: null,
+  proposalPreviewAttachmentUrl: "",
   toolsPanelOpen: false,
   evidenceMenuOpen: false,
   statusMenu: null,
@@ -275,7 +281,9 @@ function setSignatureAsset(asset) {
 }
 
 function currentSignatureDocument() {
-  return state.documentType === "materialIssue" ? state.currentMaterialIssue : state.current;
+  if (state.documentType === "materialIssue") return state.currentMaterialIssue;
+  if (state.documentType === "hourReports") return selectedHourReport() || state.current;
+  return state.current;
 }
 
 function currentSignaturePlacement() {
@@ -288,27 +296,29 @@ function updateCurrentSignaturePlacement(nextPlacement, { rerender = true } = {}
   if (rerender) render();
 }
 
-function renderSignatureZone(context = "proposal") {
+function renderSignatureZone(context = "proposal", document = currentSignatureDocument(), { interactive = true } = {}) {
   const hasSignature = Boolean(state.signatureAsset?.blob && state.signatureUrl);
-  const placement = currentSignaturePlacement();
+  const placement = normalizeSignaturePlacement(document?.signaturePlacement);
   const isInserted = hasSignature && placement.inserted;
+  const zoneAttrs = interactive ? "data-signature-zone" : "";
+  const objectAttrs = interactive
+    ? `data-signature-object tabindex="0" aria-label="Vstavljen podpis. Povleci ga za premik ali uporabi ročico za spremembo velikosti."`
+    : `aria-hidden="true"`;
 
   return `
-    <span class="signature-zone signature-zone-${escapeHtml(context)}${isInserted ? " has-inserted-signature" : ""}" data-signature-zone>
+    <span class="signature-zone signature-zone-${escapeHtml(context)}${isInserted ? " has-inserted-signature" : ""}" ${zoneAttrs}>
       <span class="signature-zone-rule" aria-hidden="true"></span>
       ${
         isInserted
           ? `<span
               class="signature-object"
-              data-signature-object
+              ${objectAttrs}
               style="left:${placement.x}%;top:${placement.y}%;width:${placement.width}%"
-              tabindex="0"
-              aria-label="Vstavljen podpis. Povleci ga za premik ali uporabi ročico za spremembo velikosti."
             >
               <img src="${escapeHtml(state.signatureUrl)}" alt="Podpis vodje laba" draggable="false" />
-              <span class="signature-resize-handle" data-signature-resize aria-hidden="true"></span>
+              ${interactive ? `<span class="signature-resize-handle" data-signature-resize aria-hidden="true"></span>` : ""}
             </span>`
-          : hasSignature
+          : hasSignature && interactive
             ? `<button class="signature-quick-insert" type="button" data-action="insert-signature" aria-label="Vstavi shranjeni podpis" title="Vstavi shranjeni podpis">${icon("pen-tool")}</button>`
             : ""
       }
@@ -363,6 +373,206 @@ function renderSignaturePanel() {
   `;
 }
 
+function serialPreviewFor(proposal) {
+  if (proposal.serial) return proposal.serial;
+  return `${normalizeLabCode(proposal.labCode)}-${yearFromDate(proposal.issueDate)}-___`;
+}
+
+function accountingNumberPreviewFor(proposal) {
+  return `${yearFromDate(proposal.issueDate)}- ____`;
+}
+
+function renderProposalInput({
+  proposal,
+  field,
+  baseClass,
+  id,
+  idPrefix = "",
+  type = "text",
+  inputmode = "",
+  smartField = false,
+  autocomplete = "",
+  ariaLabel = "",
+  preview = false,
+  value = proposal[field] || ""
+}) {
+  const actualId = `${idPrefix}${id || field}`;
+  const className = preview ? `${baseClass} preview-readonly-field` : validationControlClass(baseClass, field);
+  const smartAttr = !preview && smartField ? ` data-smart-field="${escapeHtml(field)}"` : "";
+  const dataFieldAttr = preview ? "" : ` data-field="${escapeHtml(field)}"`;
+  const readonlyAttr = preview ? " readonly tabindex=\"-1\"" : "";
+  const autocompleteAttr = autocomplete ? ` autocomplete="${escapeHtml(autocomplete)}"` : "";
+  const inputmodeAttr = inputmode ? ` inputmode="${escapeHtml(inputmode)}"` : "";
+  const ariaLabelAttr = ariaLabel ? ` aria-label="${escapeHtml(ariaLabel)}"` : "";
+  const validationAttrs = preview ? "" : validationControlAttrs(field);
+
+  return `<input class="${className}" id="${escapeHtml(actualId)}"${dataFieldAttr}${smartAttr} type="${escapeHtml(type)}"${inputmodeAttr}${autocompleteAttr}${ariaLabelAttr} value="${escapeHtml(value)}"${readonlyAttr} ${validationAttrs} />`;
+}
+
+function renderProposalPaper(proposal = state.current, { preview = false, modal = false } = {}) {
+  const validation = preview ? emptyValidationState() : state.validation || emptyValidationState();
+  const idPrefix = preview ? "preview-" : modal ? "modal-" : "";
+  const fullNameId = `${idPrefix}fullName`;
+  const jobTitleId = `${idPrefix}jobTitle`;
+  const companyId = `${idPrefix}company`;
+  const valueId = `${idPrefix}estimatedValue`;
+  const fieldError = (field) => (preview ? "" : renderFieldError(field));
+  const textareaClass = preview
+    ? "doc-textarea explanation-notes preview-readonly-field"
+    : validationControlClass("doc-textarea explanation-notes", "explanation");
+  const textareaAttrs = preview
+    ? "readonly tabindex=\"-1\""
+    : `data-field="explanation" data-smart-field="explanation" ${validationControlAttrs("explanation")}`;
+
+  return `
+    <article class="paper${preview ? " proposal-preview-document-paper" : ""}" aria-label="Predlog nakupa drobnega materiala">
+      <div class="paper-header">
+        ${centerRogLogoMarkup()}
+      </div>
+
+      <h1 class="document-title">PREDLOG NAKUPA DROBNEGA MATERIALA</h1>
+      ${
+        !preview && validation.message
+          ? `<div class="form-error-banner" role="alert">${escapeHtml(validation.message)}</div>`
+          : ""
+      }
+
+      <div class="doc-line">
+        <label for="${escapeHtml(fullNameId)}">Ime in priimek:</label>
+        <span class="smart-field">
+          ${renderProposalInput({
+            proposal,
+            field: "fullName",
+            baseClass: "doc-field person-name-field",
+            id: "fullName",
+            idPrefix,
+            autocomplete: "name",
+            preview
+          })}
+          ${fieldError("fullName")}
+        </span>
+      </div>
+
+      <div class="doc-line">
+        <label for="${escapeHtml(jobTitleId)}">Zaposlen/a na delovnem mestu:</label>
+        <span class="smart-field">
+          ${renderProposalInput({
+            proposal,
+            field: "jobTitle",
+            baseClass: "doc-field person-job-field",
+            id: "jobTitle",
+            idPrefix,
+            preview
+          })}
+          ${fieldError("jobTitle")}
+        </span>
+      </div>
+
+      <div class="doc-block purpose-block">
+        <p class="doc-block-label">Predlagam nakup naslednjega drobnega materiala za potrebe:</p>
+        <span class="smart-field">
+          ${renderProposalInput({
+            proposal,
+            field: "purpose",
+            baseClass: "doc-field doc-purpose",
+            idPrefix,
+            smartField: true,
+            preview
+          })}
+          ${fieldError("purpose")}
+        </span>
+      </div>
+
+      <div class="doc-block">
+        <p class="doc-block-label explanation-label">Opis / obrazložitev potrebe:</p>
+        <span class="smart-field">
+          <textarea class="${textareaClass}" ${textareaAttrs} rows="6" aria-label="Opis oziroma obrazložitev potrebe" placeholder="- Merkur: vijaki, mozniki in sidra 3 x 12,90 EUR&#10;- zaščitne rokavice 4 x 7,50 EUR&#10;- brusni papir in čistila 25 EUR">${escapeHtml(proposal.explanation)}</textarea>
+          ${fieldError("explanation")}
+        </span>
+      </div>
+
+      <div class="doc-line">
+        <label for="${escapeHtml(companyId)}">Podjetje:</label>
+        <span class="smart-field">
+          ${renderProposalInput({
+            proposal,
+            field: "company",
+            baseClass: "doc-field",
+            id: "company",
+            idPrefix,
+            smartField: true,
+            preview
+          })}
+          ${fieldError("company")}
+        </span>
+      </div>
+
+      <div class="doc-line value-line">
+        <label for="${escapeHtml(valueId)}">V okvirni skupni vrednosti: cca</label>
+        <span class="field-stack amount-field-stack">
+          ${renderProposalInput({
+            proposal,
+            field: "estimatedValueCents",
+            baseClass: "doc-field amount-field",
+            id: "estimatedValue",
+            idPrefix,
+            inputmode: "decimal",
+            value: centsToInputValue(proposal.estimatedValueCents),
+            preview
+          })}
+          ${fieldError("estimatedValueCents")}
+        </span>
+        <span>brez DDV</span>
+      </div>
+
+      <footer class="doc-footer">
+        <div class="issue-signature-row">
+          <div class="issue-line">
+            <span class="fixed-place" aria-label="Kraj izdaje">${escapeHtml(DEFAULTS.city)}</span>
+            <span class="field-stack date-field-stack">
+              ${renderProposalInput({
+                proposal,
+                field: "issueDate",
+                baseClass: "doc-field date-field",
+                idPrefix,
+                type: "date",
+                ariaLabel: "Datum izdaje",
+                value: proposal.issueDate,
+                preview
+              })}
+              ${fieldError("issueDate")}
+            </span>
+          </div>
+          <div class="signature-box">
+            <span class="signature-label">Podpis vodje laba</span>
+            ${renderSignatureZone("proposal", proposal, { interactive: !preview })}
+          </div>
+        </div>
+
+        <div class="accounting-number-line">
+          <span>Št.:</span>
+          <strong>${escapeHtml(accountingNumberPreviewFor(proposal))}</strong>
+        </div>
+
+        <div class="approval-box">
+          <div class="approval-choice-group">
+            <span class="approval-label">SOGLAŠAM</span>
+            <span class="approval-options">
+              <span>DA</span>
+              <span>/</span>
+              <span>NE</span>
+            </span>
+          </div>
+          <div class="director-block">
+            <span class="director-fixed-name">${escapeHtml(DEFAULTS.directorName)}, <em>${escapeHtml(DEFAULTS.directorRole)}</em></span>
+            <span class="director-signature-rule" aria-label="Podpis direktorice"></span>
+          </div>
+        </div>
+      </footer>
+    </article>
+  `;
+}
+
 function documentStatusOption(value) {
   return DOCUMENT_STATUS_OPTIONS.find((option) => option.value === value) || DOCUMENT_STATUS_OPTIONS[0];
 }
@@ -371,7 +581,7 @@ function renderDocumentRow(proposal, { modal = false } = {}) {
   const status = documentStatusOption(proposal.documentStatus || "");
   const serial = proposal.serial || "Brez številke";
   const company = proposal.company || "Brez podjetja";
-  const rowLabel = `Odpri dokument ${serial}; ${company}; ${formatCurrency(proposal.estimatedValueCents || 0)}`;
+  const rowLabel = `Poglej dokument ${serial}; ${company}; ${formatCurrency(proposal.estimatedValueCents || 0)}`;
   return `
     <button
       class="recent-row${modal ? " modal-recent-row" : ""} status-${status.className}"
@@ -458,6 +668,256 @@ function renderDocumentPopover() {
       <span class="document-popover-label">Podjetje</span>
       <strong>${escapeHtml(company)}</strong>
       <span>${formatCurrency(proposal.estimatedValueCents || 0)} · ${escapeHtml(status.label)} · ${escapeHtml(attachmentText)}</span>
+    </div>
+  `;
+}
+
+function formatChangeLogDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("sl-SI", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function formatModalDate(value) {
+  if (!value) return "Brez datuma";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Brez datuma";
+  return new Intl.DateTimeFormat("sl-SI", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric"
+  }).format(date);
+}
+
+function formatFileSize(size) {
+  const bytes = Number(size || 0);
+  if (!bytes) return "Velikost ni znana";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1).replace(".", ",")} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB`;
+}
+
+function proposalStatusTone(status) {
+  if (status.value === "approved") return "approved";
+  if (status.value === "submitted") return "review";
+  if (status.value === "rejected") return "rejected";
+  return "draft";
+}
+
+function formatProposalChangeValue(change, value) {
+  if (change?.field === "estimatedValueCents") return formatCurrency(Number(value || 0));
+  if (change?.field === "documentStatus") return documentStatusOption(value || "").label;
+  if (change?.field === "issueDate") return formatSlovenianDate(value);
+  const normalized = String(value ?? "").trim();
+  return normalized || "prazno";
+}
+
+function truncateTimelineValue(value) {
+  const text = String(value ?? "");
+  return text.length > 54 ? `${text.slice(0, 52)}...` : text;
+}
+
+function renderProposalTimeline(changeLog, author) {
+  if (!changeLog.length) return `<p class="empty-text">Za ta dokument še ni zabeleženih sprememb.</p>`;
+
+  return `
+    <ol class="proposal-change-log proposal-timeline">
+      ${changeLog
+        .map((entry) => {
+          const changes = Array.isArray(entry.changes) ? entry.changes : [];
+          const fields = changes.length ? changes.map((change) => change.label) : Array.isArray(entry.fields) ? entry.fields : [];
+          return `
+            <li class="proposal-timeline-entry">
+              <span class="proposal-timeline-icon">${icon(entry.type === "created" ? "file-plus-2" : "history")}</span>
+              <div class="proposal-timeline-content">
+                <time>${escapeHtml(formatChangeLogDate(entry.createdAt))}</time>
+                <strong>${escapeHtml(author || "Uporabnik")}</strong>
+                ${
+                  changes.length
+                    ? `<div class="proposal-timeline-diff">
+                        ${changes
+                          .slice(0, 3)
+                          .map((change) => {
+                            const before = truncateTimelineValue(formatProposalChangeValue(change, change.before));
+                            const after = truncateTimelineValue(formatProposalChangeValue(change, change.after));
+                            return `
+                              <span class="proposal-timeline-field">${escapeHtml(change.label)}</span>
+                              <span class="proposal-timeline-values">${escapeHtml(before)} <span aria-hidden="true">-&gt;</span> ${escapeHtml(after)}</span>
+                            `;
+                          })
+                          .join("")}
+                        ${
+                          changes.length > 3
+                            ? `<span class="proposal-timeline-more">+ ${changes.length - 3} dodatnih sprememb</span>`
+                            : ""
+                        }
+                      </div>`
+                    : `<span>${escapeHtml(fields.length ? `Spremenjena polja: ${fields.join(", ")}.` : entry.summary || "Sprememba dokumenta.")}</span>`
+                }
+              </div>
+            </li>
+          `;
+        })
+        .join("")}
+    </ol>
+  `;
+}
+
+function setProposalPreviewAttachment(attachment) {
+  if (state.proposalPreviewAttachmentUrl) {
+    URL.revokeObjectURL(state.proposalPreviewAttachmentUrl);
+  }
+  state.proposalPreviewAttachment = attachment || null;
+  state.proposalPreviewAttachmentUrl = attachment?.blob
+    ? URL.createObjectURL(attachment.blob)
+    : "";
+}
+
+function renderProposalAttachmentPreview(attachment, attachmentUrl, { editable = false } = {}) {
+  const hasAttachment = Boolean(attachment && attachmentUrl);
+  const isImage = String(attachment?.mimeType || "").startsWith("image/");
+  const isPdf = String(attachment?.mimeType || "").includes("pdf");
+
+  return `
+    <section class="proposal-preview-section proposal-attachment-card">
+      <div class="proposal-preview-section-head">
+        <h3>${icon("paperclip")} Priponke</h3>
+      </div>
+      ${
+        hasAttachment
+          ? `<div class="proposal-attachment-file">
+              <span class="proposal-attachment-file-icon">${icon(isPdf ? "file-text" : "image")}</span>
+              <span>
+                <strong>${escapeHtml(attachment.fileName || "Priponka")}</strong>
+                <small>${escapeHtml(formatFileSize(attachment.size))}</small>
+              </span>
+            </div>
+            <div class="proposal-attachment-viewer">
+              ${
+                isImage
+                  ? `<img src="${escapeHtml(attachmentUrl)}" alt="Predogled pripete ponudbe" />`
+                  : isPdf
+                    ? `<iframe src="${escapeHtml(attachmentUrl)}" title="Predogled pripete ponudbe"></iframe>`
+                    : `<div class="proposal-attachment-fallback">${icon("paperclip")} Priponka je dodana, vendar je ni mogoče prikazati v predogledu.</div>`
+              }
+            </div>`
+          : `<div class="proposal-attachment-empty">
+              ${icon("file-up")}
+              <strong>Ni pripete ponudbe</strong>
+              <span>Ponudbo PDF ali sliko lahko dodaš med urejanjem dokumenta.</span>
+              ${
+                editable
+                  ? `<button class="button button-outline" type="button" data-action="choose-preview-attachment">${icon("upload")} Naloži priponko</button>`
+                  : ""
+              }
+            </div>`
+      }
+      ${
+        editable && hasAttachment
+          ? `<div class="proposal-attachment-actions">
+              <button class="button button-outline" type="button" data-action="choose-preview-attachment">
+                ${icon("upload")} Zamenjaj
+              </button>
+              <button class="button button-ghost" type="button" data-action="remove-preview-attachment">
+                ${icon("x")} Odstrani
+              </button>
+            </div>`
+          : ""
+      }
+    </section>
+  `;
+}
+
+function renderProposalPreviewModal() {
+  if (!state.proposalPreviewId) return "";
+  const proposal = state.proposals.find((item) => item.id === state.proposalPreviewId);
+  if (!proposal) return "";
+
+  const isEditMode = state.proposalPreviewMode === "edit";
+  const proposalForDocument = isEditMode && state.current.id === proposal.id ? state.current : proposal;
+  const attachment = isEditMode ? state.attachment : state.proposalPreviewAttachment;
+  const serial = proposal.serial || "Brez številke";
+  const changeLog = Array.isArray(proposal.changeLog) ? proposal.changeLog.slice().reverse() : [];
+  const status = documentStatusOption(proposal.documentStatus || "");
+  const statusTone = proposalStatusTone(status);
+  const author = proposal.fullName || "Brez avtorja";
+  const createdAt = proposal.createdAt || proposal.updatedAt || proposal.issueDate;
+  const zoom = Number(state.proposalPreviewZoom || 0.82);
+  const zoomLabel = `${Math.round(zoom * 100)} %`;
+
+  return `
+    <div class="modal-backdrop proposal-preview-backdrop" data-action="close-proposal-preview" role="presentation">
+      <section class="modal-window proposal-preview-modal" role="dialog" aria-modal="true" aria-labelledby="proposal-preview-title" data-modal-window>
+        <header class="proposal-preview-header">
+          <div class="proposal-preview-title-block">
+            <p>${isEditMode ? "Urejanje dokumenta" : "Predogled dokumenta"}</p>
+            <h2 id="proposal-preview-title">Predlog nakupa drobnega materiala</h2>
+            <div class="proposal-preview-meta-line">
+              <strong>${escapeHtml(serial)}</strong>
+              <span>${escapeHtml(author)} · ustvarjeno ${escapeHtml(formatModalDate(createdAt))}</span>
+            </div>
+          </div>
+          <button class="button button-icon-only proposal-preview-close" type="button" data-action="close-proposal-preview" aria-label="Zapri predogled">
+            ${icon("x")}
+          </button>
+        </header>
+        <div class="modal-body proposal-preview-body">
+          <main class="proposal-preview-main" aria-label="${isEditMode ? "Urejanje dokumenta" : "Predogled dokumenta"}">
+            <div class="proposal-preview-viewer-toolbar" aria-label="Orodja predogleda PDF">
+              <div>
+                <button class="button button-icon-only button-ghost" type="button" data-action="zoom-proposal-preview-out" aria-label="Pomanjšaj predogled">${icon("minus")}</button>
+                <strong>${escapeHtml(zoomLabel)}</strong>
+                <button class="button button-icon-only button-ghost" type="button" data-action="zoom-proposal-preview-in" aria-label="Povečaj predogled">${icon("plus")}</button>
+              </div>
+              <button class="button button-outline proposal-fit-button" type="button" data-action="fit-proposal-preview">${icon("maximize-2")} Fit width</button>
+              <span class="proposal-page-indicator">Stran 1 / 1</span>
+            </div>
+            <div class="proposal-preview-document${isEditMode ? " is-editing" : ""}" style="${documentLayoutCssVariables()}">
+              <div class="paper-frame proposal-preview-paper-frame" style="--proposal-preview-scale:${zoom}">
+                ${renderProposalPaper(proposalForDocument, { preview: !isEditMode, modal: isEditMode })}
+              </div>
+            </div>
+          </main>
+          <aside class="proposal-preview-side" aria-label="Podatki in dejanja dokumenta">
+            <section class="proposal-preview-section">
+              <div class="proposal-preview-section-head">
+                <h3>${icon("circle-dot")} Status</h3>
+              </div>
+              <span class="proposal-status-badge proposal-status-badge-${escapeHtml(statusTone)}">${escapeHtml(status.label)}</span>
+            </section>
+            <section class="proposal-preview-section">
+              <div class="proposal-preview-section-head">
+                <h3>${icon("zap")} Hitre akcije</h3>
+              </div>
+              <div class="proposal-quick-actions">
+                ${
+                  isEditMode
+                    ? `<button class="button button-solid" type="button" data-action="save-proposal-preview">${icon("save")} Shrani spremembe</button>
+                      <button class="button button-outline" type="button" data-action="finish-proposal-preview-edit">${icon("arrow-left")} Nazaj na predogled</button>`
+                    : `<button class="button button-solid" type="button" data-action="edit-proposal-preview">${icon("pencil")} Uredi dokument</button>
+                      <button class="button button-outline" type="button" data-action="download-preview-proposal">${icon("download")} Export PDF</button>
+                      <button class="button button-outline" type="button" data-action="duplicate-proposal-preview">${icon("copy")} Podvoji</button>
+                      <button class="button button-ghost proposal-danger-action" type="button" data-action="delete-proposal-preview">${icon("trash-2")} Izbriši</button>`
+                }
+              </div>
+            </section>
+            ${renderProposalAttachmentPreview(attachment, state.proposalPreviewAttachmentUrl, { editable: isEditMode })}
+            <section class="proposal-preview-section proposal-change-card">
+              <div class="proposal-preview-section-head">
+                <h3>${icon("git-commit-vertical")} Zgodovina</h3>
+              </div>
+              ${renderProposalTimeline(changeLog, author)}
+            </section>
+          </aside>
+        </div>
+      </section>
     </div>
   `;
 }
@@ -982,6 +1442,21 @@ function renderFieldError(fieldName) {
 }
 
 function validationTargetSelector(fieldName) {
+  const inPreviewEdit = state.proposalPreviewId && state.proposalPreviewMode === "edit";
+  if (inPreviewEdit) {
+    const modalSelectors = {
+      fullName: "#modal-fullName",
+      jobTitle: "#modal-jobTitle",
+      purpose: '.proposal-preview-modal [data-field="purpose"]',
+      explanation: '.proposal-preview-modal [data-field="explanation"]',
+      company: "#modal-company",
+      estimatedValueCents: "#modal-estimatedValue",
+      issueDate: '.proposal-preview-modal [data-field="issueDate"]',
+      labCode: "#labCode"
+    };
+    return modalSelectors[fieldName] || "";
+  }
+
   const selectors = {
     fullName: "#fullName",
     jobTitle: "#jobTitle",
@@ -2299,6 +2774,8 @@ function renderHourReports() {
     toolsPanelOpen: state.toolsPanelOpen,
     renderEvidenceTabs,
     renderDocumentCommands,
+    renderSignaturePanel,
+    renderSignatureZone,
     renderUnsavedPrompt,
     icon,
     escapeHtml,
@@ -2362,103 +2839,7 @@ function render() {
       <section class="workspace" id="evidence-workspace">
         <div class="document-stage">
           <div class="paper-frame" style="${documentLayoutCssVariables()}">
-            <article class="paper" aria-label="Predlog nakupa drobnega materiala">
-            <div class="paper-header">
-              ${centerRogLogoMarkup()}
-            </div>
-
-            <h1 class="document-title">PREDLOG NAKUPA DROBNEGA MATERIALA</h1>
-            ${
-              validation.message
-                ? `<div class="form-error-banner" role="alert">${escapeHtml(validation.message)}</div>`
-                : ""
-            }
-
-            <div class="doc-line">
-              <label for="fullName">Ime in priimek:</label>
-              <span class="smart-field">
-                <input class="${validationControlClass("doc-field person-name-field", "fullName")}" id="fullName" data-field="fullName" value="${escapeHtml(state.current.fullName)}" autocomplete="name" ${validationControlAttrs("fullName")} />
-                ${renderFieldError("fullName")}
-              </span>
-            </div>
-
-            <div class="doc-line">
-              <label for="jobTitle">Zaposlen/a na delovnem mestu:</label>
-              <span class="smart-field">
-                <input class="${validationControlClass("doc-field person-job-field", "jobTitle")}" id="jobTitle" data-field="jobTitle" value="${escapeHtml(state.current.jobTitle)}" ${validationControlAttrs("jobTitle")} />
-                ${renderFieldError("jobTitle")}
-              </span>
-            </div>
-
-            <div class="doc-block purpose-block">
-              <p class="doc-block-label">Predlagam nakup naslednjega drobnega materiala za potrebe:</p>
-              <span class="smart-field">
-                <input class="${validationControlClass("doc-field doc-purpose", "purpose")}" data-field="purpose" data-smart-field="purpose" value="${escapeHtml(state.current.purpose)}" ${validationControlAttrs("purpose")} />
-                ${renderFieldError("purpose")}
-              </span>
-            </div>
-
-            <div class="doc-block">
-              <p class="doc-block-label explanation-label">Opis / obrazložitev potrebe:</p>
-              <span class="smart-field">
-                <textarea class="${validationControlClass("doc-textarea explanation-notes", "explanation")}" data-field="explanation" data-smart-field="explanation" rows="6" aria-label="Opis oziroma obrazložitev potrebe" placeholder="- Merkur: vijaki, mozniki in sidra 3 x 12,90 EUR&#10;- zaščitne rokavice 4 x 7,50 EUR&#10;- brusni papir in čistila 25 EUR" ${validationControlAttrs("explanation")}>${escapeHtml(state.current.explanation)}</textarea>
-                ${renderFieldError("explanation")}
-              </span>
-            </div>
-
-            <div class="doc-line">
-              <label for="company">Podjetje:</label>
-              <span class="smart-field">
-                <input class="${validationControlClass("doc-field", "company")}" id="company" data-field="company" data-smart-field="company" value="${escapeHtml(state.current.company)}" ${validationControlAttrs("company")} />
-                ${renderFieldError("company")}
-              </span>
-            </div>
-
-            <div class="doc-line value-line">
-              <label for="estimatedValue">V okvirni skupni vrednosti: cca</label>
-              <span class="field-stack amount-field-stack">
-                <input class="${validationControlClass("doc-field amount-field", "estimatedValueCents")}" id="estimatedValue" data-field="estimatedValueCents" inputmode="decimal" value="${escapeHtml(centsToInputValue(state.current.estimatedValueCents))}" ${validationControlAttrs("estimatedValueCents")} />
-                ${renderFieldError("estimatedValueCents")}
-              </span>
-              <span>brez DDV</span>
-            </div>
-
-            <footer class="doc-footer">
-              <div class="issue-signature-row">
-                <div class="issue-line">
-                  <span class="fixed-place" aria-label="Kraj izdaje">${escapeHtml(DEFAULTS.city)}</span>
-                  <span class="field-stack date-field-stack">
-                    <input class="${validationControlClass("doc-field date-field", "issueDate")}" data-field="issueDate" type="date" value="${escapeHtml(state.current.issueDate)}" aria-label="Datum izdaje" ${validationControlAttrs("issueDate")} />
-                    ${renderFieldError("issueDate")}
-                  </span>
-                </div>
-                <div class="signature-box">
-                  <span class="signature-label">Podpis vodje laba</span>
-                  ${renderSignatureZone("proposal")}
-                </div>
-              </div>
-
-              <div class="accounting-number-line">
-                <span>Št.:</span>
-                <strong>${escapeHtml(accountingNumberPreview())}</strong>
-              </div>
-
-              <div class="approval-box">
-                <div class="approval-choice-group">
-                  <span class="approval-label">SOGLAŠAM</span>
-                  <span class="approval-options">
-                    <span>DA</span>
-                    <span>/</span>
-                    <span>NE</span>
-                  </span>
-                </div>
-                <div class="director-block">
-                  <span class="director-fixed-name">${escapeHtml(DEFAULTS.directorName)}, <em>${escapeHtml(DEFAULTS.directorRole)}</em></span>
-                  <span class="director-signature-rule" aria-label="Podpis direktorice"></span>
-                </div>
-              </div>
-            </footer>
-          </article>
+            ${renderProposalPaper(state.current)}
           </div>
         </div>
 
@@ -2620,6 +3001,7 @@ function render() {
              </div>`
           : ""
       }
+      ${renderProposalPreviewModal()}
       ${renderStatusMenu()}
       ${renderDocumentPopover()}
       ${renderDeleteConfirm()}
@@ -2701,11 +3083,11 @@ function bindEvents() {
         return;
       }
       clearDocumentPopoverTimers();
-      loadExistingDocument(button.dataset.loadId);
+      void openProposalPreview(button.dataset.loadId);
     });
     button.addEventListener("mouseenter", () => scheduleDocumentPopoverFromElement(button));
     button.addEventListener("mouseleave", closeDocumentPopover);
-    button.addEventListener("focus", () => openDocumentPopoverFromElement(button));
+    button.addEventListener("focus", () => scheduleDocumentPopoverFromElement(button));
     button.addEventListener("blur", closeDocumentPopover);
     button.addEventListener("pointerdown", (event) => {
       startRecentDeleteDrag(event, button);
@@ -2769,6 +3151,8 @@ function bindEvents() {
       if (event.target !== event.currentTarget) return;
       if (backdrop.dataset.action === "cancel-delete") {
         closeDeleteConfirm();
+      } else if (backdrop.dataset.action === "close-proposal-preview") {
+        void closeProposalPreview();
       } else {
         closeHistoryModal();
       }
@@ -3560,7 +3944,7 @@ async function downloadSelectedHourReport(mode = "download") {
   if (!validateHourReports([report])) return;
   setBusy(true);
   try {
-    const blob = await createHourReportPdfBlob(report);
+    const blob = await createHourReportPdfBlob(report, state.signatureAsset);
     const fileName = hourReportFileName(report);
     if (mode === "print") {
       const url = URL.createObjectURL(blob);
@@ -3593,7 +3977,7 @@ async function downloadAllHourReports() {
   setBusy(true);
   try {
     downloadBlob(
-      await createHourReportsPdfBlob(reports),
+      await createHourReportsPdfBlob(reports, state.signatureAsset),
       `${hourBatchFileStem()}.pdf`
     );
     showToast(`Združeni PDF vsebuje ${reports.length} poročil.`);
@@ -3618,7 +4002,7 @@ async function downloadHourReportsZip() {
   try {
     const zip = new window.JSZip();
     for (const report of reports) {
-      zip.file(hourReportFileName(report), await createHourReportPdfBlob(report));
+      zip.file(hourReportFileName(report), await createHourReportPdfBlob(report, state.signatureAsset));
     }
     downloadBlob(
       await zip.generateAsync({ type: "blob" }),
@@ -3698,6 +4082,7 @@ function bindHourReportEvents() {
     event.currentTarget.value = "";
     if (file) await handleHourReportFile(file);
   });
+  document.getElementById("signatureInput")?.addEventListener("change", handleSignatureSelected);
   bindHourReportDropzone();
 
   document.querySelectorAll("[data-select-hour-report]").forEach((button) => {
@@ -3738,6 +4123,7 @@ function bindHourReportEvents() {
   document.querySelectorAll("[data-reset-hour-row]").forEach((button) => {
     button.addEventListener("click", () => resetSelectedHourRow(button.dataset.resetHourRow));
   });
+  bindSignatureEvents();
   bindEvidenceNavigationEvents();
 }
 
@@ -4878,6 +5264,31 @@ async function handleAction(action) {
       openHistoryModal();
     } else if (action === "close-history") {
       closeHistoryModal();
+    } else if (action === "close-proposal-preview") {
+      await closeProposalPreview();
+    } else if (action === "edit-proposal-preview") {
+      await editProposalPreview();
+    } else if (action === "save-proposal-preview") {
+      await saveProposalPreview();
+    } else if (action === "finish-proposal-preview-edit") {
+      await finishProposalPreviewEdit();
+    } else if (action === "download-preview-proposal") {
+      await downloadProposalPreviewPdf();
+    } else if (action === "duplicate-proposal-preview") {
+      await duplicateProposalPreview();
+    } else if (action === "delete-proposal-preview") {
+      deleteProposalPreview();
+    } else if (action === "zoom-proposal-preview-in") {
+      updateProposalPreviewZoom(0.08);
+    } else if (action === "zoom-proposal-preview-out") {
+      updateProposalPreviewZoom(-0.08);
+    } else if (action === "fit-proposal-preview") {
+      state.proposalPreviewZoom = 0.82;
+      render();
+    } else if (action === "choose-preview-attachment") {
+      document.getElementById("offerInput")?.click();
+    } else if (action === "remove-preview-attachment") {
+      await removeAttachment();
     } else if (action === "toggle-tools") {
       toggleToolsPanel();
     } else if (action === "close-tools") {
@@ -4937,6 +5348,157 @@ function closeHistoryModal() {
   render();
 }
 
+async function openProposalPreview(proposalId) {
+  if (!proposalId) return;
+  const proposal = state.proposals.find((item) => item.id === proposalId);
+  if (!proposal) return;
+  clearDocumentPopoverTimers();
+  state.documentPopover = null;
+  state.statusMenu = null;
+  state.historyModalOpen = false;
+  state.proposalPreviewId = proposalId;
+  state.proposalPreviewMode = "view";
+  setProposalPreviewAttachment(await getAttachment(proposal.offerAttachmentId));
+  render();
+}
+
+async function closeProposalPreview({ skipUnsavedGuard = false } = {}) {
+  if (!state.proposalPreviewId) return;
+  if (state.proposalPreviewMode === "edit" && state.dirty && !skipUnsavedGuard) {
+    requestUnsavedChanges({ type: "close-proposal-preview" });
+    return;
+  }
+  const proposalId = state.proposalPreviewId;
+  const proposal = state.proposals.find((item) => item.id === proposalId);
+  if (state.proposalPreviewMode === "edit" && proposal && state.current.id === proposalId) {
+    state.current = { ...proposal };
+    state.attachment = await getAttachment(proposal.offerAttachmentId);
+    state.persistedAttachmentId = proposal.offerAttachmentId || "";
+    clearDirty();
+    clearValidation();
+  }
+  state.proposalPreviewId = "";
+  state.proposalPreviewMode = "view";
+  setProposalPreviewAttachment(null);
+  render();
+}
+
+async function editProposalPreview({ skipUnsavedGuard = false, proposalId = state.proposalPreviewId } = {}) {
+  if (!proposalId) return;
+  if (state.dirty && !skipUnsavedGuard && state.current.id !== proposalId) {
+    requestUnsavedChanges({ type: "edit-proposal-preview", proposalId });
+    return;
+  }
+  const proposal = state.proposals.find((item) => item.id === proposalId);
+  if (!proposal) return;
+  state.current = { ...proposal };
+  state.attachment = await getAttachment(proposal.offerAttachmentId);
+  state.persistedAttachmentId = proposal.offerAttachmentId || "";
+  state.proposalPreviewId = proposalId;
+  state.proposalPreviewMode = "edit";
+  setProposalPreviewAttachment(state.attachment);
+  clearDirty();
+  clearValidation();
+  render();
+}
+
+async function finishProposalPreviewEdit({ skipUnsavedGuard = false } = {}) {
+  const proposalId = state.proposalPreviewId;
+  if (!proposalId) return;
+  if (state.proposalPreviewMode === "edit" && state.dirty && !skipUnsavedGuard) {
+    requestUnsavedChanges({ type: "finish-proposal-preview-edit" });
+    return;
+  }
+
+  const proposal = state.proposals.find((item) => item.id === proposalId);
+  if (!proposal) return;
+  if (state.current.id === proposalId) {
+    state.current = { ...proposal };
+    state.attachment = await getAttachment(proposal.offerAttachmentId);
+    state.persistedAttachmentId = proposal.offerAttachmentId || "";
+    clearDirty();
+    clearValidation();
+  }
+  state.proposalPreviewMode = "view";
+  setProposalPreviewAttachment(await getAttachment(proposal.offerAttachmentId));
+  render();
+}
+
+async function saveProposalPreview() {
+  const saved = await saveCurrentDocument({ silent: true });
+  if (!saved) return;
+  state.proposalPreviewId = saved.id;
+  state.proposalPreviewMode = "view";
+  setProposalPreviewAttachment(await getAttachment(saved.offerAttachmentId));
+  render();
+  showToast(`Dokument ${saved.serial} je shranjen.`);
+}
+
+function updateProposalPreviewZoom(delta) {
+  state.proposalPreviewZoom = clamp(Number(state.proposalPreviewZoom || 0.82) + delta, 0.58, 1.16);
+  render();
+}
+
+async function downloadProposalPreviewPdf() {
+  const proposal = state.proposals.find((item) => item.id === state.proposalPreviewId);
+  if (!proposal) return;
+
+  setBusy(true);
+  try {
+    const attachment = proposal.offerAttachmentId ? await getAttachment(proposal.offerAttachmentId) : null;
+    const pdfBlob = await createCombinedPdfBlob(proposal, attachment, state.signatureAsset);
+    downloadBlob(pdfBlob, `${safeFileName(`predlog-${proposal.serial || proposal.id}`)}.pdf`);
+    showToast("Dokument PDF je pripravljen za prenos.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function duplicateProposalPreview() {
+  const proposal = state.proposals.find((item) => item.id === state.proposalPreviewId);
+  if (!proposal) return;
+
+  const proposals = await getAllProposals();
+  const duplicate = proposalWithChangeLog(
+    proposalWithSaveMetadata(
+      {
+        ...proposal,
+        id: "",
+        serial: "",
+        createdAt: "",
+        updatedAt: "",
+        offerAttachmentId: "",
+        documentStatus: "",
+        changeLog: []
+      },
+      proposals
+    ),
+    null
+  );
+
+  await saveProposal(duplicate);
+  state.proposals = sortRecent(await getAllProposals());
+  state.current = { ...duplicate };
+  state.attachment = null;
+  state.persistedAttachmentId = "";
+  state.proposalPreviewId = duplicate.id;
+  state.proposalPreviewMode = "edit";
+  setProposalPreviewAttachment(null);
+  clearDirty();
+  clearValidation();
+  render();
+  showToast(`Ustvarjena je kopija ${duplicate.serial}.`);
+}
+
+function deleteProposalPreview() {
+  const proposalId = state.proposalPreviewId;
+  if (!proposalId) return;
+  state.proposalPreviewId = "";
+  state.proposalPreviewMode = "view";
+  setProposalPreviewAttachment(null);
+  openDeleteConfirm(proposalId, { skipUnsavedGuard: true });
+}
+
 function openDeleteConfirm(proposalId, { skipUnsavedGuard = false } = {}) {
   if (!proposalId) return;
   if (state.dirty && !skipUnsavedGuard && proposalId === state.current.id) {
@@ -4985,6 +5547,12 @@ async function continueUnsavedAction() {
     }
   } else if (action.type === "load") {
     await loadExistingDocument(action.proposalId, { skipUnsavedGuard: true });
+  } else if (action.type === "edit-proposal-preview") {
+    await editProposalPreview({ skipUnsavedGuard: true, proposalId: action.proposalId });
+  } else if (action.type === "finish-proposal-preview-edit") {
+    await finishProposalPreviewEdit({ skipUnsavedGuard: true });
+  } else if (action.type === "close-proposal-preview") {
+    await closeProposalPreview({ skipUnsavedGuard: true });
   } else if (action.type === "load-material-issue") {
     await loadMaterialIssue(action.issueId, { skipUnsavedGuard: true });
   } else if (action.type === "load-attendance") {
@@ -5164,7 +5732,7 @@ function finishRecentDeleteDrag() {
   if (!recentDeleteDrag) return;
 
   const { proposalId, ready, dragging } = recentDeleteDrag;
-  if (dragging) suppressRecentClick(proposalId);
+  if (dragging && ready) suppressRecentClick(proposalId);
   resetRecentDeleteDragElement();
   hideDeleteDragHint();
   recentDeleteDrag = null;
@@ -5218,10 +5786,14 @@ async function updateDocumentStatus(proposalId, documentStatus) {
   const proposal = state.proposals.find((item) => item.id === proposalId);
   if (!proposal) return;
 
-  const updated = {
-    ...proposal,
-    documentStatus
-  };
+  const updated = proposalWithChangeLog(
+    {
+      ...proposal,
+      documentStatus,
+      updatedAt: new Date().toISOString()
+    },
+    proposal
+  );
 
   await saveProposal(updated);
   state.proposals = sortRecent(await getAllProposals());
@@ -5285,6 +5857,9 @@ async function switchDocumentType({ skipUnsavedGuard = false, target = "" } = {}
   state.evidenceMenuOpen = false;
   state.toolsPanelOpen = false;
   state.historyModalOpen = false;
+  state.proposalPreviewId = "";
+  state.proposalPreviewMode = "view";
+  setProposalPreviewAttachment(null);
   state.statusMenu = null;
   state.documentPopover = null;
   clearDirty();
@@ -5461,6 +6036,9 @@ async function newDocument({ skipUnsavedGuard = false } = {}) {
   state.persistedAttachmentId = "";
   state.statusMenu = null;
   state.documentPopover = null;
+  state.proposalPreviewId = "";
+  state.proposalPreviewMode = "view";
+  setProposalPreviewAttachment(null);
   state.toolsPanelOpen = false;
   clearDirty();
   clearValidation();
@@ -5479,7 +6057,8 @@ async function saveCurrentDocument({ silent = false } = {}) {
 
   clearValidation();
   const proposals = await getAllProposals();
-  const saved = proposalWithSaveMetadata(state.current, proposals);
+  const previousProposal = proposals.find((proposal) => proposal.id === state.current.id);
+  const saved = proposalWithChangeLog(proposalWithSaveMetadata(state.current, proposals), previousProposal);
   const attachmentToSave =
     state.attachment && state.attachment.id !== state.persistedAttachmentId ? state.attachment : null;
   const deleteAttachmentIds =
@@ -5510,6 +6089,9 @@ async function loadExistingDocument(id, { skipUnsavedGuard = false } = {}) {
   state.attachment = await getAttachment(proposal.offerAttachmentId);
   state.persistedAttachmentId = proposal.offerAttachmentId || "";
   state.historyModalOpen = false;
+  state.proposalPreviewId = "";
+  state.proposalPreviewMode = "view";
+  setProposalPreviewAttachment(null);
   state.statusMenu = null;
   state.toolsPanelOpen = false;
   clearDirty();
@@ -5561,6 +6143,9 @@ async function attachOfferFile(file) {
   };
   state.current.offerAttachmentId = attachment.id;
   state.attachment = attachment;
+  if (state.proposalPreviewId && state.proposalPreviewMode === "edit") {
+    setProposalPreviewAttachment(attachment);
+  }
   markDirty();
   render();
   showToast(`Datoteka ${file.name} je pripeta.`);
@@ -5570,6 +6155,9 @@ async function removeAttachment() {
   if (!state.current.offerAttachmentId) return;
   state.current.offerAttachmentId = "";
   state.attachment = null;
+  if (state.proposalPreviewId && state.proposalPreviewMode === "edit") {
+    setProposalPreviewAttachment(null);
+  }
   markDirty();
   render();
   showToast("Ponudba je odstranjena iz dokumenta.");

@@ -84,6 +84,43 @@ function drawLine(page, x1, x2, top, color, thickness = 0.6) {
   });
 }
 
+async function embedSignature(pdf, signatureAsset) {
+  if (!signatureAsset?.blob) return null;
+  const bytes = new Uint8Array(await signatureAsset.blob.arrayBuffer());
+  const mimeType = String(signatureAsset.mimeType || signatureAsset.blob.type || "").toLowerCase();
+  const fileName = String(signatureAsset.fileName || "").toLowerCase();
+  if (mimeType === "image/jpeg" || mimeType === "image/jpg" || /\.jpe?g$/.test(fileName)) {
+    return pdf.embedJpg(bytes);
+  }
+  return pdf.embedPng(bytes);
+}
+
+function placedSignatureBox(box, placement) {
+  if (!placement?.inserted) return null;
+  const widthPercent = Math.min(100, Math.max(25, Number(placement.width) || 90));
+  const xPercent = Math.min(100 - widthPercent, Math.max(0, Number(placement.x) || 0));
+  const yPercent = Math.min(70, Math.max(0, Number(placement.y) || 0));
+  return {
+    x: box.x + box.width * (xPercent / 100),
+    top: box.top + box.height * (yPercent / 100),
+    width: box.width * (widthPercent / 100),
+    height: box.height * ((100 - yPercent) / 100)
+  };
+}
+
+function drawContainedImage(page, image, box) {
+  if (!image) return;
+  const scale = Math.min(box.width / image.width, box.height / image.height);
+  const width = image.width * scale;
+  const height = image.height * scale;
+  page.drawImage(image, {
+    x: box.x + (box.width - width) / 2,
+    y: yFromTop(box.top, height),
+    width,
+    height
+  });
+}
+
 function drawVerticalLine(page, x, top, bottom, color, thickness = 0.5) {
   page.drawLine({
     start: { x, y: yFromTop(top) },
@@ -324,7 +361,7 @@ function estimatedSummaryHeight(report) {
   return 145 + detailRows * 14;
 }
 
-function drawSignature(page, top, fonts, colors) {
+async function drawSignature(pdf, page, report, top, fonts, colors, signatureAsset) {
   const right = PAGE.width - PAGE.margin;
   const left = right - 190;
   drawText(page, "Podpis vodje laboratorija", left, top, {
@@ -332,10 +369,20 @@ function drawSignature(page, top, fonts, colors) {
     size: 9,
     color: colors.black
   });
-  drawLine(page, left, right, top + 25, colors.black, 0.65);
+  const signatureBox = {
+    x: left,
+    top: top + 11,
+    width: right - left,
+    height: 44
+  };
+  const placedBox = placedSignatureBox(signatureBox, report.signaturePlacement);
+  if (placedBox) {
+    drawContainedImage(page, await embedSignature(pdf, signatureAsset), placedBox);
+  }
+  drawLine(page, left, right, top + 48, colors.black, 0.65);
 }
 
-function appendReport(pdf, report, fonts, colors) {
+async function appendReport(pdf, report, fonts, colors, signatureAsset) {
   let page = pdf.addPage([PAGE.width, PAGE.height]);
   drawHeader(page, report, fonts, colors);
   let top = drawTableHeader(page, 118, fonts, colors);
@@ -362,11 +409,11 @@ function appendReport(pdf, report, fonts, colors) {
     top = 124;
   }
   const summaryBottom = drawSummary(page, report, top + 18, fonts, colors);
-  const signatureTop = Math.max(summaryBottom + 34, PAGE.height - 92);
-  drawSignature(page, signatureTop, fonts, colors);
+  const signatureTop = Math.max(summaryBottom + 34, PAGE.height - 106);
+  await drawSignature(pdf, page, report, signatureTop, fonts, colors, signatureAsset);
 }
 
-async function createPdf(reports) {
+async function createPdf(reports, signatureAsset = null) {
   if (!window.PDFLib) throw new Error("Knjižnica za PDF ni naložena.");
   const { PDFDocument, rgb } = window.PDFLib;
   const pdf = await PDFDocument.create();
@@ -377,16 +424,18 @@ async function createPdf(reports) {
     grid: rgb(0.58, 0.58, 0.62),
     light: rgb(0.9, 0.91, 0.91)
   };
-  reports.forEach((report) => appendReport(pdf, report, fonts, colors));
+  for (const report of reports) {
+    await appendReport(pdf, report, fonts, colors, signatureAsset);
+  }
   return pdf;
 }
 
-export async function createHourReportPdfBlob(report) {
-  const pdf = await createPdf([report]);
+export async function createHourReportPdfBlob(report, signatureAsset = null) {
+  const pdf = await createPdf([report], signatureAsset);
   return new Blob([await pdf.save()], { type: "application/pdf" });
 }
 
-export async function createHourReportsPdfBlob(reports) {
-  const pdf = await createPdf(reports);
+export async function createHourReportsPdfBlob(reports, signatureAsset = null) {
+  const pdf = await createPdf(reports, signatureAsset);
   return new Blob([await pdf.save()], { type: "application/pdf" });
 }

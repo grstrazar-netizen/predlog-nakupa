@@ -133,7 +133,7 @@ function reportSummary(report, { escapeHtml, formatCurrency }) {
 }
 
 function reportPage(report, helpers) {
-  const { escapeHtml } = helpers;
+  const { escapeHtml, renderSignatureZone } = helpers;
   return `
     <article class="paper hour-report-paper" aria-label="Poročilo ur za ${escapeHtml(report.personName)}">
       <header class="hour-report-header">
@@ -148,7 +148,11 @@ function reportPage(report, helpers) {
       ${reportSummary(report, helpers)}
       <footer class="hour-report-signature">
         <span>Podpis vodje laboratorija</span>
-        <span class="hour-report-signature-line" aria-hidden="true"></span>
+        ${
+          renderSignatureZone
+            ? renderSignatureZone("hourReport")
+            : `<span class="hour-report-signature-line" aria-hidden="true"></span>`
+        }
       </footer>
     </article>
   `;
@@ -504,12 +508,14 @@ export function renderHourReportsWorkspace(context) {
     toolsPanelOpen,
     renderEvidenceTabs,
     renderDocumentCommands,
+    renderSignaturePanel,
+    renderSignatureZone,
     renderUnsavedPrompt,
     icon,
     escapeHtml,
     formatCurrency
   } = context;
-  const helpers = { icon, escapeHtml, formatCurrency };
+  const helpers = { icon, escapeHtml, formatCurrency, renderSignatureZone };
 
   if (context.security.status !== "unlocked") {
     return renderHourSecurityWorkspace(context);
@@ -558,6 +564,7 @@ export function renderHourReportsWorkspace(context) {
             </div>
           </section>
           ${batch ? reportList(batch, selectedReport, helpers) : ""}
+          ${selectedReport && renderSignaturePanel ? renderSignaturePanel() : ""}
           ${selectedReport ? profilePanel(selectedReport, helpers) : ""}
           ${batch ? exportPanel(batch, selectedReport, helpers) : ""}
           ${hourSecurityPanel(helpers)}
@@ -569,6 +576,7 @@ export function renderHourReportsWorkspace(context) {
         ${icon("panel-right")} Pregled
       </button>
       <input class="hidden-input" type="file" id="hourReportInput" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+      <input class="hidden-input" type="file" id="signatureInput" accept="image/png,image/jpeg,.png,.jpg,.jpeg" />
       ${changeHourPinModal(context.security, helpers)}
       ${renderUnsavedPrompt()}
     </main>

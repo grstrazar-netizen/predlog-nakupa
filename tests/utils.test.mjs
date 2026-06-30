@@ -9,6 +9,7 @@ import {
   nextSerial,
   normalizeLabCode,
   parseMoneyToCents,
+  proposalWithChangeLog,
   spendingBreakdownForYear,
   spendingForYear,
   uniqueSuggestions,
@@ -18,6 +19,38 @@ import {
 test("normalizes lab codes for serial numbers", () => {
   assert.equal(normalizeLabCode(" kov "), "KOV");
   assert.equal(normalizeLabCode("lab-01"), "LAB01");
+});
+
+test("records proposal creation and later edited fields", () => {
+  const created = proposalWithChangeLog(
+    {
+      id: "proposal-1",
+      fullName: "Gregor Stražar",
+      purpose: "Za potrebe kovinarskega laba",
+      estimatedValueCents: 12000
+    },
+    null,
+    "2026-06-01T08:00:00.000Z"
+  );
+
+  assert.equal(created.changeLog.length, 1);
+  assert.equal(created.changeLog[0].type, "created");
+
+  const unchanged = proposalWithChangeLog(
+    { ...created },
+    created,
+    "2026-06-01T09:00:00.000Z"
+  );
+  assert.equal(unchanged.changeLog.length, 1);
+
+  const edited = proposalWithChangeLog(
+    { ...created, company: "Merkur d.o.o.", estimatedValueCents: 14500 },
+    created,
+    "2026-06-01T10:00:00.000Z"
+  );
+
+  assert.equal(edited.changeLog.length, 2);
+  assert.deepEqual(edited.changeLog[1].fields, ["Podjetje", "Okvirna vrednost"]);
 });
 
 test("derives lab codes from Slovenian lab names", () => {
