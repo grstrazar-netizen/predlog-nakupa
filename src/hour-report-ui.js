@@ -27,6 +27,7 @@ function reportTable(report, { escapeHtml, formatCurrency, icon }) {
           <col class="hour-col-hours" />
           <col class="hour-col-rate" />
           <col class="hour-col-amount" />
+          <col class="hour-col-actions" />
         </colgroup>
         <thead>
           <tr>
@@ -38,6 +39,7 @@ function reportTable(report, { escapeHtml, formatCurrency, icon }) {
             <th>Ur</th>
             <th>Postavka</th>
             <th>Znesek</th>
+            <th class="hour-actions-heading" aria-label="Dejanja"></th>
           </tr>
         </thead>
         <tbody>
@@ -73,6 +75,11 @@ function reportTable(report, { escapeHtml, formatCurrency, icon }) {
                         ${icon("rotate-ccw")}
                       </button>
                     </span>
+                  </td>
+                  <td class="hour-action-cell">
+                    <button class="hour-delete-row" type="button" data-delete-hour-row="${escapeHtml(row.id)}" title="Izbriši vrstico" aria-label="Izbriši vrstico ${escapeHtml(row.shiftDescription || row.date)}">
+                      ${icon("trash-2")}
+                    </button>
                   </td>
                 </tr>
               `
@@ -578,6 +585,7 @@ export function renderHourReportsWorkspace(context) {
       <input class="hidden-input" type="file" id="hourReportInput" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
       <input class="hidden-input" type="file" id="signatureInput" accept="image/png,image/jpeg,.png,.jpg,.jpeg" />
       ${changeHourPinModal(context.security, helpers)}
+      ${context.renderHourRowDeleteConfirm ? context.renderHourRowDeleteConfirm() : ""}
       ${renderUnsavedPrompt()}
     </main>
   `;

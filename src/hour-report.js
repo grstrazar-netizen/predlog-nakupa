@@ -387,6 +387,13 @@ export function resetHourRow(row) {
   };
 }
 
+export function removeHourReportRow(report, rowId) {
+  return {
+    ...report,
+    rows: (report?.rows || []).filter((row) => row.id !== rowId)
+  };
+}
+
 export function hourReportFileName(report) {
   const [year, month] = report.monthKey.split("-").map(Number);
   return `${safeFileName(

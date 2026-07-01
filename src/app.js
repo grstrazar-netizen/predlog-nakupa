@@ -54,6 +54,7 @@ import {
   normalizeRateCents,
   parseConnecteamWorkbook,
   profileRateForDate,
+  removeHourReportRow,
   resetHourRow,
   updateReportProfile,
   validateHourReport
@@ -134,6 +135,7 @@ const state = {
   hourProfiles: [],
   hourBatch: null,
   selectedHourReportId: "",
+  hourRowDeleteConfirm: null,
   hourSecurity: {
     status: "loading",
     screen: "setup",
@@ -157,6 +159,8 @@ const state = {
   toolsPanelOpen: false,
   evidenceMenuOpen: false,
   statusMenu: null,
+  materialStatusMenu: null,
+  collapsedPanels: {},
   documentPopover: null,
   deleteConfirmId: "",
   unsavedPrompt: null,
@@ -650,6 +654,69 @@ function renderStatusMenu() {
   `;
 }
 
+function renderMaterialIssueRow(issue) {
+  const status = materialIssueStatusOption(issue.status || "draft");
+  const serial = issue.serial || "Osnutek";
+  const buyer = issue.buyerName || "Brez uporabnika";
+  return `
+    <button
+      class="recent-row material-recent-row status-${status.className}"
+      type="button"
+      data-load-material-issue-id="${escapeHtml(issue.id)}"
+      data-material-status-context-id="${escapeHtml(issue.id)}"
+      aria-label="Odpri izdajnico ${escapeHtml(serial)}"
+    >
+      <span class="recent-meta">
+        <span class="recent-title">
+          <span
+            class="recent-status-dot recent-status-dot-${status.className}"
+            data-material-status-menu-id="${escapeHtml(issue.id)}"
+            title="Status: ${escapeHtml(status.label)}"
+            aria-hidden="true"
+          ></span>
+          <span>${escapeHtml(serial)}</span>
+        </span>
+        <span class="recent-subtitle">${escapeHtml(buyer)} · ${formatCurrency(materialIssueTotalCents(issue))}</span>
+      </span>
+      ${icon("chevron-right")}
+    </button>
+  `;
+}
+
+function renderMaterialStatusMenu() {
+  if (!state.materialStatusMenu) return "";
+  const issue = state.materialIssues.find((item) => item.id === state.materialStatusMenu.issueId);
+  if (!issue) return "";
+
+  const currentStatus = issue.status || "draft";
+  return `
+    <div
+      class="status-menu"
+      style="left: ${Math.round(state.materialStatusMenu.x)}px; top: ${Math.round(state.materialStatusMenu.y)}px;"
+      role="menu"
+      aria-label="Status izdajnice"
+    >
+      ${MATERIAL_ISSUE_STATUSES.map((option) => {
+        const selected = option.value === currentStatus;
+        const status = materialIssueStatusOption(option.value);
+        return `
+          <button
+            class="status-menu-option"
+            type="button"
+            role="menuitem"
+            data-material-status-option-id="${escapeHtml(issue.id)}"
+            data-material-status-value="${escapeHtml(option.value)}"
+          >
+            <span class="recent-status-dot recent-status-dot-${status.className}" aria-hidden="true"></span>
+            <span>${escapeHtml(option.label)}</span>
+            ${selected ? icon("check") : ""}
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
 function renderDocumentPopover() {
   if (!state.documentPopover) return "";
   const proposal = state.proposals.find((item) => item.id === state.documentPopover.proposalId);
@@ -942,6 +1009,41 @@ function renderDeleteConfirm() {
           <div class="modal-actions">
             <button class="button button-outline" type="button" data-action="cancel-delete">Prekliči</button>
             <button class="button button-solid button-danger" type="button" data-action="confirm-delete">Izbriši predlog</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderHourRowDeleteConfirm() {
+  const pending = state.hourRowDeleteConfirm;
+  if (!pending) return "";
+  const report = state.hourBatch?.reports.find((item) => item.id === pending.reportId);
+  const row = report?.rows.find((item) => item.id === pending.rowId);
+  if (!report || !row) return "";
+
+  const rowLabel = [row.date, row.shiftDescription || row.workType]
+    .filter(Boolean)
+    .join(" · ");
+
+  return `
+    <div class="modal-backdrop delete-modal-backdrop" data-action="cancel-hour-row-delete" role="presentation">
+      <section class="modal-window delete-modal" role="dialog" aria-modal="true" aria-labelledby="hour-row-delete-title" data-modal-window>
+        <header class="modal-header">
+          <h2 class="modal-title" id="hour-row-delete-title">Izbrišem vrstico?</h2>
+          <button class="button button-icon-only button-ghost" type="button" data-action="cancel-hour-row-delete" aria-label="Prekliči brisanje vrstice">
+            ${icon("x")}
+          </button>
+        </header>
+        <div class="modal-body delete-modal-body">
+          <p>
+            Vrstica <strong>${escapeHtml(rowLabel || "iz poročila ur")}</strong> bo odstranjena iz poročila za <strong>${escapeHtml(report.personName)}</strong>.
+          </p>
+          <p class="delete-warning">Po brisanju se bodo ure, zneski in razčlenitev samodejno preračunali.</p>
+          <div class="modal-actions">
+            <button class="button button-outline" type="button" data-action="cancel-hour-row-delete">Prekliči</button>
+            <button class="button button-solid button-danger" type="button" data-action="confirm-hour-row-delete">Izbriši vrstico</button>
           </div>
         </div>
       </section>
@@ -1329,6 +1431,20 @@ function materialStatusLabel(value) {
   return MATERIAL_ISSUE_STATUSES.find((status) => status.value === value)?.label || "Osnutek";
 }
 
+function materialIssueStatusOption(value) {
+  const status = MATERIAL_ISSUE_STATUSES.find((option) => option.value === value) || MATERIAL_ISSUE_STATUSES[0];
+  const classNameByStatus = {
+    draft: "none",
+    printed: "submitted",
+    paid: "approved",
+    collected: "approved"
+  };
+  return {
+    ...status,
+    className: classNameByStatus[status.value] || "none"
+  };
+}
+
 function centerRogLogoMarkup() {
   return `
     <img class="center-rog-logo" src="/assets/center-rog-logo.svg" alt="Center Rog" />
@@ -1542,6 +1658,121 @@ function renderToast() {
   toast.className = "toast";
   toast.textContent = state.toast;
   document.body.append(toast);
+}
+
+function normalizePanelId(value) {
+  return String(value || "panel")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function sidebarPanelDefaultCollapsed(title) {
+  return ["Moj podpis", "Urejanje dokumenta"].includes(String(title || "").trim());
+}
+
+function sidebarPanelCollapsed(panelId, title) {
+  if (Object.prototype.hasOwnProperty.call(state.collapsedPanels, panelId)) {
+    return Boolean(state.collapsedPanels[panelId]);
+  }
+  return sidebarPanelDefaultCollapsed(title);
+}
+
+function setSidebarPanelCollapsed(panelId, collapsed) {
+  state.collapsedPanels = {
+    ...state.collapsedPanels,
+    [panelId]: collapsed
+  };
+}
+
+function applySidebarPanelCollapsed(panel, collapsed) {
+  if (!panel) return;
+  const body = panel.querySelector(":scope > .panel-body");
+  const header = panel.querySelector(":scope > .panel-header");
+  const toggleButton = header?.querySelector("[data-panel-toggle-id]");
+  panel.classList.toggle("is-collapsed", collapsed);
+  if (body) body.hidden = collapsed;
+  if (header) header.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  if (toggleButton) {
+    toggleButton.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    toggleButton.setAttribute("aria-label", collapsed ? "Odpri kartico" : "Zapri kartico");
+  }
+}
+
+function toggleSidebarPanel(panelId) {
+  if (!panelId) return;
+  const panel = [...document.querySelectorAll(".side-panel .panel")].find((item) => item.dataset.panelId === panelId);
+  const nextCollapsed = panel
+    ? !panel.classList.contains("is-collapsed")
+    : !Boolean(state.collapsedPanels[panelId]);
+  setSidebarPanelCollapsed(panelId, nextCollapsed);
+  applySidebarPanelCollapsed(panel, nextCollapsed);
+}
+
+function panelEventTargetElement(target) {
+  if (!target) return null;
+  if (target.nodeType === 1) return target;
+  return target.parentElement || null;
+}
+
+function panelToggleShouldIgnore(target, header) {
+  let element = panelEventTargetElement(target);
+  while (element && element !== header) {
+    if (element.matches?.("button, a, input, select, textarea, [data-no-panel-toggle]")) {
+      return true;
+    }
+    element = element.parentElement;
+  }
+  return false;
+}
+
+function enhanceCollapsiblePanels() {
+  document.querySelectorAll(".side-panel .panel").forEach((panel, index) => {
+    const header = panel.querySelector(":scope > .panel-header");
+    const body = panel.querySelector(":scope > .panel-body");
+    const title = panel.querySelector(":scope > .panel-header .panel-title")?.textContent?.trim() || `Kartica ${index + 1}`;
+    if (!header || !body) return;
+
+    const panelId = panel.dataset.panelId || `${state.documentType}-${normalizePanelId(title)}-${index}`;
+    panel.dataset.panelId = panelId;
+    const bodyId = body.id || `panel-body-${panelId}`;
+    body.id = bodyId;
+
+    const collapsed = sidebarPanelCollapsed(panelId, title);
+    applySidebarPanelCollapsed(panel, collapsed);
+
+    header.classList.add("panel-header-collapsible");
+    header.setAttribute("role", "button");
+    header.setAttribute("tabindex", "0");
+    header.setAttribute("aria-controls", bodyId);
+    header.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    header.insertAdjacentHTML(
+      "beforeend",
+      `<button
+        class="panel-collapse-button"
+        type="button"
+        data-action="toggle-panel"
+        data-panel-toggle-id="${escapeHtml(panelId)}"
+        aria-controls="${escapeHtml(bodyId)}"
+        aria-expanded="${collapsed ? "false" : "true"}"
+        aria-label="${collapsed ? "Odpri kartico" : "Zapri kartico"}"
+      >
+        <span class="panel-collapse-indicator" aria-hidden="true">${icon("chevron-down")}</span>
+      </button>`
+    );
+
+    header.addEventListener("click", (event) => {
+      if (panelToggleShouldIgnore(event.target, header)) return;
+      toggleSidebarPanel(panelId);
+    });
+    header.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      toggleSidebarPanel(panelId);
+    });
+  });
 }
 
 const EVIDENCE_TABS = [
@@ -1980,26 +2211,6 @@ function renderMaterialIssue() {
 
           <section class="panel">
             <div class="panel-header">
-              <span class="panel-icon">${icon("route")}</span>
-              <span class="panel-title">Pot dokumenta</span>
-            </div>
-            <div class="panel-body">
-              <label class="field-stack">
-                <span>Status izdajnice</span>
-                <select class="input material-status-select" data-material-status>
-                  ${MATERIAL_ISSUE_STATUSES.map((status) => `<option value="${status.value}" ${issue.status === status.value ? "selected" : ""}>${status.label}</option>`).join("")}
-                </select>
-              </label>
-              <ol class="material-workflow">
-                <li class="${["printed", "paid", "collected"].includes(issue.status) ? "is-complete" : ""}">Natisni izdajnico</li>
-                <li class="${["paid", "collected"].includes(issue.status) ? "is-complete" : ""}">Plačilo na blagajni</li>
-                <li class="${issue.status === "collected" ? "is-complete" : ""}">Prevzem materiala z računom</li>
-              </ol>
-            </div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-header">
               <span class="panel-icon">${icon("history")}</span>
               <span class="panel-title">Zadnje izdajnice</span>
             </div>
@@ -2007,17 +2218,7 @@ function renderMaterialIssue() {
               ${
                 recentIssues.length
                   ? recentIssues
-                      .map(
-                        (savedIssue) => `
-                          <button class="material-history-row status-${escapeHtml(savedIssue.status || "draft")}" type="button" data-load-material-issue-id="${escapeHtml(savedIssue.id)}">
-                            <span>
-                              <strong>${escapeHtml(savedIssue.serial || "Osnutek")}</strong>
-                              <small>${escapeHtml(savedIssue.buyerName || "Brez uporabnika")} · ${formatCurrency(materialIssueTotalCents(savedIssue))}</small>
-                            </span>
-                            ${icon("chevron-right")}
-                          </button>
-                        `
-                      )
+                      .map((savedIssue) => renderMaterialIssueRow(savedIssue))
                       .join("")
                   : `<p class="empty-text">Shranjene izdajnice se bodo pokazale tukaj.</p>`
               }
@@ -2771,6 +2972,7 @@ function renderHourReports() {
     renderDocumentCommands,
     renderSignaturePanel,
     renderSignatureZone,
+    renderHourRowDeleteConfirm,
     renderUnsavedPrompt,
     icon,
     escapeHtml,
@@ -2998,6 +3200,7 @@ function render() {
       }
       ${renderProposalPreviewModal()}
       ${renderStatusMenu()}
+      ${renderMaterialStatusMenu()}
       ${renderDocumentPopover()}
       ${renderDeleteConfirm()}
       ${renderUnsavedPrompt()}
@@ -3006,6 +3209,7 @@ function render() {
     </main>
   `;
 
+  enhanceCollapsiblePanels();
   bindEvents();
   refreshIcons();
   renderToast();
@@ -3068,7 +3272,7 @@ function bindEvents() {
   });
 
   document.querySelectorAll("[data-action]").forEach((button) => {
-    button.addEventListener("click", () => handleAction(button.dataset.action));
+    button.addEventListener("click", (event) => handleAction(button.dataset.action, event));
   });
 
   document.querySelectorAll("[data-load-id]").forEach((button) => {
@@ -3231,11 +3435,42 @@ function bindMaterialIssueEvents() {
   });
 
   document.querySelectorAll("[data-load-material-issue-id]").forEach((button) => {
-    button.addEventListener("click", () => loadMaterialIssue(button.dataset.loadMaterialIssueId));
+    button.addEventListener("click", (event) => {
+      if (event.target.closest("[data-material-status-menu-id]")) return;
+      loadMaterialIssue(button.dataset.loadMaterialIssueId);
+    });
+    button.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openMaterialStatusMenu(button.dataset.loadMaterialIssueId, event.clientX, event.clientY);
+    });
   });
 
-  document.querySelector("[data-material-status]")?.addEventListener("change", async (event) => {
-    await updateMaterialIssueStatus(event.currentTarget.value);
+  document.querySelectorAll("[data-material-status-menu-id]").forEach((target) => {
+    target.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = target.getBoundingClientRect();
+      openMaterialStatusMenu(target.dataset.materialStatusMenuId, rect.left, rect.bottom + 6);
+    });
+    target.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = target.getBoundingClientRect();
+      openMaterialStatusMenu(target.dataset.materialStatusMenuId, rect.left, rect.bottom + 6);
+    });
+  });
+
+  document.querySelectorAll("[data-material-status-option-id]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      await updateMaterialIssueStatusForIssue(
+        button.dataset.materialStatusOptionId,
+        button.dataset.materialStatusValue || "draft"
+      );
+    });
   });
 
   document.getElementById("signatureInput")?.addEventListener("change", handleSignatureSelected);
@@ -3903,6 +4138,43 @@ function resetSelectedHourRow(rowId) {
   render();
 }
 
+function requestHourRowDelete(rowId) {
+  const report = selectedHourReport();
+  const row = report?.rows.find((item) => item.id === rowId);
+  if (!report || !row) return;
+  state.hourRowDeleteConfirm = {
+    reportId: report.id,
+    rowId
+  };
+  render();
+}
+
+function cancelHourRowDelete() {
+  if (!state.hourRowDeleteConfirm) return;
+  state.hourRowDeleteConfirm = null;
+  render();
+}
+
+function confirmHourRowDelete() {
+  const pending = state.hourRowDeleteConfirm;
+  if (!pending || !state.hourBatch) return;
+  const report = state.hourBatch.reports.find((item) => item.id === pending.reportId);
+  const rowExists = report?.rows.some((row) => row.id === pending.rowId);
+  if (!report || !rowExists) {
+    state.hourRowDeleteConfirm = null;
+    render();
+    return;
+  }
+
+  state.hourBatch.reports = state.hourBatch.reports.map((item) =>
+    item.id === pending.reportId ? removeHourReportRow(item, pending.rowId) : item
+  );
+  state.hourRowDeleteConfirm = null;
+  markDirty();
+  render();
+  showToast("Vrstica je odstranjena iz poročila.");
+}
+
 function includedHourReports() {
   return (state.hourBatch?.reports || []).filter((report) => report.included);
 }
@@ -4117,6 +4389,9 @@ function bindHourReportEvents() {
   });
   document.querySelectorAll("[data-reset-hour-row]").forEach((button) => {
     button.addEventListener("click", () => resetSelectedHourRow(button.dataset.resetHourRow));
+  });
+  document.querySelectorAll("[data-delete-hour-row]").forEach((button) => {
+    button.addEventListener("click", () => requestHourRowDelete(button.dataset.deleteHourRow));
   });
   bindSignatureEvents();
   bindEvidenceNavigationEvents();
@@ -4671,6 +4946,9 @@ function closeSuggestionsOnOutsideClick(event) {
   if (!event.target.closest(".status-menu") && !event.target.closest("[data-status-menu-id]")) {
     closeStatusMenu();
   }
+  if (!event.target.closest(".status-menu") && !event.target.closest("[data-material-status-menu-id]")) {
+    closeMaterialStatusMenu();
+  }
   if (event.target.closest(".smart-field")) return;
   document.querySelectorAll(".suggestion-popover").forEach((popover) => popover.remove());
 }
@@ -5147,7 +5425,7 @@ async function confirmAttendanceExport() {
   await exportAttendanceSheetPdf(mode, { allowIncomplete: true });
 }
 
-async function handleAction(action) {
+async function handleAction(action, event) {
   try {
     if (isOnboardingCalculatorDemoStep()) {
       stopOnboardingCalculatorDemo({ restore: true });
@@ -5169,7 +5447,11 @@ async function handleAction(action) {
       return;
     }
 
-    if (action === "new") {
+    if (action === "toggle-panel") {
+      event?.preventDefault();
+      event?.stopPropagation();
+      toggleSidebarPanel(event?.currentTarget?.dataset.panelToggleId);
+    } else if (action === "new") {
       if (state.documentType === "materialIssue") {
         await newMaterialIssue();
       } else if (state.documentType === "attendance") {
@@ -5309,6 +5591,10 @@ async function handleAction(action) {
       closeDeleteConfirm();
     } else if (action === "confirm-delete") {
       await confirmDeleteProposal();
+    } else if (action === "cancel-hour-row-delete") {
+      cancelHourRowDelete();
+    } else if (action === "confirm-hour-row-delete") {
+      confirmHourRowDelete();
     } else if (action === "cancel-unsaved") {
       closeUnsavedPrompt();
     } else if (action === "confirm-unsaved") {
@@ -5350,6 +5636,7 @@ async function openProposalPreview(proposalId) {
   clearDocumentPopoverTimers();
   state.documentPopover = null;
   state.statusMenu = null;
+  state.materialStatusMenu = null;
   state.historyModalOpen = false;
   state.proposalPreviewId = proposalId;
   state.proposalPreviewMode = "view";
@@ -5503,6 +5790,7 @@ function openDeleteConfirm(proposalId, { skipUnsavedGuard = false } = {}) {
   clearDocumentPopoverTimers();
   closeDocumentPopover();
   state.statusMenu = null;
+  state.materialStatusMenu = null;
   state.deleteConfirmId = proposalId;
   render();
 }
@@ -5596,6 +5884,7 @@ async function confirmDeleteProposal() {
   }
   state.deleteConfirmId = "";
   state.statusMenu = null;
+  state.materialStatusMenu = null;
   closeDocumentPopover();
   render();
   showToast(`Predlog ${proposal.serial || ""} je izbrisan.`);
@@ -5603,6 +5892,7 @@ async function confirmDeleteProposal() {
 
 function openStatusMenu(proposalId, x, y) {
   if (!proposalId) return;
+  state.materialStatusMenu = null;
   state.statusMenu = { proposalId, x, y };
   render();
 }
@@ -5610,6 +5900,19 @@ function openStatusMenu(proposalId, x, y) {
 function closeStatusMenu() {
   if (!state.statusMenu) return;
   state.statusMenu = null;
+  render();
+}
+
+function openMaterialStatusMenu(issueId, x, y) {
+  if (!issueId) return;
+  state.statusMenu = null;
+  state.materialStatusMenu = { issueId, x, y };
+  render();
+}
+
+function closeMaterialStatusMenu() {
+  if (!state.materialStatusMenu) return;
+  state.materialStatusMenu = null;
   render();
 }
 
@@ -5796,6 +6099,7 @@ async function updateDocumentStatus(proposalId, documentStatus) {
     state.current = { ...state.current, documentStatus };
   }
   state.statusMenu = null;
+  state.materialStatusMenu = null;
   closeDocumentPopover();
   render();
 }
@@ -5856,6 +6160,7 @@ async function switchDocumentType({ skipUnsavedGuard = false, target = "" } = {}
   state.proposalPreviewMode = "view";
   setProposalPreviewAttachment(null);
   state.statusMenu = null;
+  state.materialStatusMenu = null;
   state.documentPopover = null;
   clearDirty();
   clearValidation();
@@ -5902,6 +6207,7 @@ async function newMaterialIssue({ skipUnsavedGuard = false } = {}) {
   const lastIssue = sortRecent(state.materialIssues)[0];
   const lastProposal = sortRecent(state.proposals)[0] || state.current;
   state.currentMaterialIssue = createBlankMaterialIssue(lastIssue, lastProposal);
+  state.materialStatusMenu = null;
   state.toolsPanelOpen = false;
   clearDirty();
   clearMaterialValidation();
@@ -5951,6 +6257,7 @@ async function loadMaterialIssue(id, { skipUnsavedGuard = false } = {}) {
     ...issue,
     items: (issue.items || []).map((row) => ({ ...row }))
   };
+  state.materialStatusMenu = null;
   state.toolsPanelOpen = false;
   clearDirty();
   clearMaterialValidation();
@@ -5981,6 +6288,31 @@ async function updateMaterialIssueStatus(nextStatus) {
   });
   if (!saved) return;
   showToast(`Status: ${materialStatusLabel(nextStatus)}.`);
+}
+
+async function updateMaterialIssueStatusForIssue(issueId, nextStatus) {
+  const issue = state.materialIssues.find((item) => item.id === issueId);
+  if (!issue) return;
+
+  const updated = materialIssueWithSaveMetadata(
+    {
+      ...issue,
+      status: nextStatus || "draft"
+    },
+    state.materialIssues
+  );
+
+  await persistMaterialIssue(updated);
+  state.materialIssues = sortRecent(await getAllMaterialIssues());
+  if (state.currentMaterialIssue.id === issueId) {
+    state.currentMaterialIssue = {
+      ...updated,
+      items: (updated.items || []).map((row) => ({ ...row }))
+    };
+  }
+  state.materialStatusMenu = null;
+  render();
+  showToast(`Status izdajnice: ${materialStatusLabel(updated.status)}.`);
 }
 
 async function exportMaterialIssuePdf(mode) {
@@ -6030,6 +6362,7 @@ async function newDocument({ skipUnsavedGuard = false } = {}) {
   state.attachment = null;
   state.persistedAttachmentId = "";
   state.statusMenu = null;
+  state.materialStatusMenu = null;
   state.documentPopover = null;
   state.proposalPreviewId = "";
   state.proposalPreviewMode = "view";
@@ -6088,6 +6421,7 @@ async function loadExistingDocument(id, { skipUnsavedGuard = false } = {}) {
   state.proposalPreviewMode = "view";
   setProposalPreviewAttachment(null);
   state.statusMenu = null;
+  state.materialStatusMenu = null;
   state.toolsPanelOpen = false;
   clearDirty();
   clearValidation();

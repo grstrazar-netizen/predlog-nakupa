@@ -10,6 +10,7 @@ import {
   hourReportBreakdown,
   hourReportTotals,
   parseConnecteamWorkbook,
+  removeHourReportRow,
   updateReportProfile
 } from "../src/hour-report.js";
 
@@ -130,4 +131,37 @@ test("recalculates rows from a profile and groups the final values", () => {
     hourReportBreakdown(updated)[0].descriptions.map((item) => item.label),
     ["Dopoldne", "Popoldne"]
   );
+});
+
+test("removes a single hour row and recalculates totals from remaining rows", () => {
+  const report = {
+    personName: "Ana Novak",
+    profile: createHourProfile("Ana Novak"),
+    rows: [
+      {
+        id: "row-1",
+        date: "2026-05-01",
+        workType: "Odprti termini",
+        shiftDescription: "Dopoldne",
+        hours: 6,
+        rateCents: 1500,
+        rateOverridden: false
+      },
+      {
+        id: "row-2",
+        date: "2026-05-02",
+        workType: "Usposabljanje",
+        shiftDescription: "MIG/MAG",
+        hours: 4,
+        rateCents: 1600,
+        rateOverridden: false
+      }
+    ]
+  };
+
+  const updated = removeHourReportRow(report, "row-1");
+
+  assert.deepEqual(updated.rows.map((row) => row.id), ["row-2"]);
+  assert.equal(hourReportTotals(updated).workedHours, 4);
+  assert.equal(hourReportTotals(updated).rowsCents, 6400);
 });

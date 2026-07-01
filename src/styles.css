@@ -2623,6 +2623,68 @@ textarea.doc-purpose {
   border-bottom: 1px solid var(--border);
 }
 
+.panel-header-collapsible {
+  cursor: pointer;
+  user-select: none;
+}
+
+.panel-header-collapsible:hover {
+  background: #f8fafc;
+}
+
+.panel-header-collapsible:focus-visible {
+  outline: 2px solid #111827;
+  outline-offset: -2px;
+}
+
+.panel-collapse-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+.panel-collapse-button:hover {
+  background: #f4f4f5;
+  color: #18181b;
+}
+
+.panel-collapse-button:focus-visible {
+  outline: 2px solid #18181b;
+  outline-offset: 1px;
+}
+
+.panel-collapse-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 150ms ease;
+}
+
+.panel-collapse-indicator svg {
+  width: 16px;
+  height: 16px;
+}
+
+.panel.is-collapsed .panel-header {
+  border-bottom-color: transparent;
+}
+
+.panel.is-collapsed > .panel-body {
+  display: none !important;
+}
+
+.panel.is-collapsed .panel-collapse-indicator {
+  transform: rotate(-90deg);
+}
+
 .panel-icon {
   display: grid;
   place-items: center;
@@ -2639,6 +2701,10 @@ textarea.doc-purpose {
   flex-direction: column;
   gap: 12px;
   padding: 12px;
+}
+
+.panel-body[hidden] {
+  display: none !important;
 }
 
 .metric {
@@ -2957,6 +3023,7 @@ textarea.doc-purpose {
 }
 
 .file-detail,
+.recent-subtitle,
 .logo-detail {
   color: var(--muted-foreground);
   font-size: 11px;
@@ -4133,7 +4200,7 @@ textarea.doc-purpose {
 }
 
 .hour-col-description {
-  width: 24%;
+  width: 21%;
 }
 
 .hour-col-hours {
@@ -4145,7 +4212,11 @@ textarea.doc-purpose {
 }
 
 .hour-col-amount {
-  width: 16%;
+  width: 14%;
+}
+
+.hour-col-actions {
+  width: 5%;
 }
 
 .hour-report-table th {
@@ -4161,7 +4232,9 @@ textarea.doc-purpose {
   text-align: left;
 }
 
-.hour-report-table th:nth-last-child(-n + 3) {
+.hour-report-table th:nth-child(6),
+.hour-report-table th:nth-child(7),
+.hour-report-table th:nth-child(8) {
   text-align: right;
 }
 
@@ -4263,6 +4336,35 @@ textarea.doc-purpose {
 }
 
 .hour-reset-row svg {
+  width: 12px;
+  height: 12px;
+}
+
+.hour-actions-heading,
+.hour-action-cell {
+  text-align: center;
+}
+
+.hour-delete-row {
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  margin: 1px auto;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #71717a;
+}
+
+.hour-delete-row:hover,
+.hour-delete-row:focus-visible {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.hour-delete-row svg {
   width: 12px;
   height: 12px;
 }
