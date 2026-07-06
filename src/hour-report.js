@@ -17,6 +17,47 @@ export const REQUIRED_CONNECTEAM_HEADERS = Object.freeze([
   "shift total hrs"
 ]);
 
+const CONNECTEAM_COLUMN_ALIASES = Object.freeze({
+  users: ["users", "user", "uporabnik", "mentor", "mentorica", "izvajalec", "oseba", "name"],
+  shiftTitle: ["shift title", "title", "opis izmene", "naziv izmene", "izmena"],
+  job: ["job", "tip dela", "work type", "activity", "aktivnost", "projekt", "program"],
+  date: ["date", "datum", "shift date", "day", "dan"],
+  setTimes: ["set times", "times", "termin", "cas", "čas", "ure termina", "scheduled time"],
+  shiftTotalHours: [
+    "shift total hrs",
+    "shift total hours",
+    "total hrs",
+    "total hours",
+    "hours",
+    "ure",
+    "trajanje",
+    "duration"
+  ]
+});
+
+const CONNECTEAM_REQUIRED_FIELDS = Object.freeze([
+  ["users", "Users"],
+  ["shiftTitle", "Shift title"],
+  ["job", "Job"],
+  ["date", "Date"],
+  ["setTimes", "Set times"]
+]);
+
+const ENGLISH_MONTHS = Object.freeze({
+  january: "01",
+  february: "02",
+  march: "03",
+  april: "04",
+  may: "05",
+  june: "06",
+  july: "07",
+  august: "08",
+  september: "09",
+  october: "10",
+  november: "11",
+  december: "12"
+});
+
 const SLOVENIAN_MONTHS = Object.freeze([
   "januar",
   "februar",
@@ -40,7 +81,14 @@ function normalizedKey(value) {
   return normalizedText(value)
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
-    .toLocaleLowerCase("sl-SI");
+    .toLocaleLowerCase("sl-SI")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function compactKey(value) {
+  return normalizedKey(value).replace(/\s+/g, "");
 }
 
 function numberValue(value, fallback = 0) {
@@ -107,7 +155,7 @@ export function normalizeRateCents(value, fallback = 0) {
   return Math.max(0, Math.round(numberValue(value, fallback / 100) * 100));
 }
 
-function parseConnecteamDate(value) {
+function parseConnecteamDate(value, slashDateOrder = "mdy") {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(
       value.getDate()
@@ -118,10 +166,29 @@ function parseConnecteamDate(value) {
   if (!text) return "";
   const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
-  const us = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (us) return `${us[3]}-${us[1].padStart(2, "0")}-${us[2].padStart(2, "0")}`;
+  const slash = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slash) {
+    const first = Number(slash[1]);
+    const second = Number(slash[2]);
+    const day = first > 12 || slashDateOrder === "dmy" ? first : second;
+    const month = first > 12 || slashDateOrder === "dmy" ? second : first;
+    return `${slash[3]}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
   const sl = text.match(/^(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})$/);
   if (sl) return `${sl[3]}-${sl[2].padStart(2, "0")}-${sl[1].padStart(2, "0")}`;
+
+  const english = text.match(/^(?:[A-Za-z]+,\s*)?([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})$/);
+  if (english) {
+    const month = ENGLISH_MONTHS[english[1].toLocaleLowerCase("en-US")];
+    if (month) return `${english[3]}-${month}-${english[2].padStart(2, "0")}`;
+  }
+
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(
+      parsed.getDate()
+    ).padStart(2, "0")}`;
+  }
   return "";
 }
 
@@ -183,15 +250,65 @@ export function hourReportMonthLabel(report) {
   return monthLabel(report?.monthKey || "");
 }
 
-function normalizedHeaderMap(headers) {
-  const result = new Map();
-  headers.forEach((header) => result.set(normalizedKey(header), header));
-  return result;
+function columnScore(header, aliases) {
+  const normalizedHeader = normalizedKey(header);
+  const compactHeader = compactKey(header);
+  return aliases.reduce((best, alias) => {
+    const normalizedAlias = normalizedKey(alias);
+    const compactAlias = compactKey(alias);
+    if (normalizedHeader === normalizedAlias) return Math.max(best, 100);
+    if (compactHeader === compactAlias) return Math.max(best, 96);
+    if (normalizedHeader.includes(normalizedAlias)) return Math.max(best, 75);
+    if (compactHeader.includes(compactAlias)) return Math.max(best, 70);
+    return best;
+  }, 0);
 }
 
-function valueForHeader(row, headerMap, expected) {
-  const actual = headerMap.get(normalizedKey(expected));
-  return actual === undefined ? "" : row[actual];
+function resolveConnecteamColumns(headers) {
+  const used = new Set();
+  const columns = {};
+  for (const [field, aliases] of Object.entries(CONNECTEAM_COLUMN_ALIASES)) {
+    const best = headers
+      .map((header) => ({ header, score: used.has(header) ? 0 : columnScore(header, aliases) }))
+      .sort((left, right) => right.score - left.score)[0];
+    if (best?.score > 0) {
+      columns[field] = best.header;
+      used.add(best.header);
+    } else {
+      columns[field] = "";
+    }
+  }
+  return columns;
+}
+
+function missingRequiredColumns(columns) {
+  return CONNECTEAM_REQUIRED_FIELDS.filter(([field]) => !columns[field]).map(([, label]) => label);
+}
+
+function valueForColumn(row, columns, field) {
+  const actual = columns[field];
+  return actual ? row[actual] : "";
+}
+
+function parseHoursFromRow(row, columns) {
+  const explicitHours = parseHours(valueForColumn(row, columns, "shiftTotalHours"));
+  if (explicitHours > 0) return explicitHours;
+  const times = parseSetTimes(valueForColumn(row, columns, "setTimes"));
+  return hoursBetweenTimes(times.startTime, times.endTime) || 0;
+}
+
+function inferSlashDateOrder(rows, columns) {
+  let dmySignals = 0;
+  let mdySignals = 0;
+  rows.forEach((row) => {
+    const match = normalizedText(valueForColumn(row, columns, "date")).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (!match) return;
+    const first = Number(match[1]);
+    const second = Number(match[2]);
+    if (first > 12 && second <= 12) dmySignals += 1;
+    if (second > 12 && first <= 12) mdySignals += 1;
+  });
+  return dmySignals > mdySignals ? "dmy" : "mdy";
 }
 
 function reportIdFor(name, monthKey) {
@@ -213,26 +330,29 @@ export function parseConnecteamWorkbook(arrayBuffer, fileName, profiles = []) {
   });
   if (!rows.length) throw new Error("Prvi delovni list ne vsebuje podatkov.");
 
-  const headerMap = normalizedHeaderMap(Object.keys(rows[0]));
-  const missing = REQUIRED_CONNECTEAM_HEADERS.filter(
-    (header) => !headerMap.has(normalizedKey(header))
-  );
+  const columns = resolveConnecteamColumns(Object.keys(rows[0]));
+  const missing = missingRequiredColumns(columns);
   if (missing.length) {
-    throw new Error(`V Excel datoteki manjkajo stolpci: ${missing.join(", ")}.`);
+    throw new Error(
+      `V Excel datoteki ne najdem obveznih stolpcev: ${missing.join(
+        ", "
+      )}. Preveri, da je Connecteam izvoz iz pogleda List view.`
+    );
   }
 
   const profileMap = new Map(
     profiles.map((profile) => [normalizedKey(profile.name), createHourProfile(profile.name, profile)])
   );
+  const slashDateOrder = inferSlashDateOrder(rows, columns);
   const grouped = new Map();
   const rejectedRows = [];
 
   rows.forEach((sourceRow, sourceIndex) => {
-    const personName = normalizedText(valueForHeader(sourceRow, headerMap, "Users"));
+    const personName = normalizedText(valueForColumn(sourceRow, columns, "users"));
     if (!personName || normalizedKey(personName) === "open shift") return;
 
-    const date = parseConnecteamDate(valueForHeader(sourceRow, headerMap, "Date"));
-    const hours = parseHours(valueForHeader(sourceRow, headerMap, "shift total hrs"));
+    const date = parseConnecteamDate(valueForColumn(sourceRow, columns, "date"), slashDateOrder);
+    const hours = parseHoursFromRow(sourceRow, columns);
     if (!date || hours <= 0) {
       rejectedRows.push(sourceIndex + 2);
       return;
@@ -253,12 +373,12 @@ export function parseConnecteamWorkbook(arrayBuffer, fileName, profiles = []) {
       });
     }
 
-    const times = parseSetTimes(valueForHeader(sourceRow, headerMap, "Set times"));
+    const times = parseSetTimes(valueForColumn(sourceRow, columns, "setTimes"));
     const rateCents = profileRateForDate(profile, date);
     const workType =
-      normalizedText(valueForHeader(sourceRow, headerMap, "Job")) || "Brez tipa dela";
+      normalizedText(valueForColumn(sourceRow, columns, "job")) || "Brez tipa dela";
     const shiftDescription =
-      normalizedText(valueForHeader(sourceRow, headerMap, "Shift title")) || workType;
+      normalizedText(valueForColumn(sourceRow, columns, "shiftTitle")) || workType;
 
     grouped.get(key).rows.push({
       id: generateId("hour-row"),
