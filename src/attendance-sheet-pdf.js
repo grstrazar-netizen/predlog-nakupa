@@ -1,5 +1,6 @@
 import { DOCUMENT_FONT_FILES } from "./document-layout.js";
 import {
+  attendanceParticipantEmailDisplay,
   attendanceVisibleRowCount,
   ATTENDANCE_ROWS_PER_PAGE,
   normalizePhotoConsent
@@ -265,7 +266,7 @@ function drawParticipantTable(page, participants, offset, totalParticipants, fon
       String(offset + index + 1),
       participant.firstName,
       participant.lastName,
-      participant.email,
+      attendanceParticipantEmailDisplay(participant),
       "",
       participant.photoConsent
     ];

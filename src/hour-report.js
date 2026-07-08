@@ -498,6 +498,29 @@ export function updateReportProfile(report, profile) {
   };
 }
 
+export function updateHourReportRow(row, fieldName, value, profile) {
+  const next = { ...row };
+  if (fieldName === "hours") {
+    next.hours = normalizeHours(value);
+  } else if (fieldName === "rateCents") {
+    next.rateCents = normalizeRateCents(value);
+    next.rateOverridden = true;
+  } else {
+    next[fieldName] = value;
+    if (fieldName === "date") {
+      const rate = profileRateForDate(profile, next.date);
+      next.rateCents = rate;
+      next.originalRateCents = rate;
+      next.rateOverridden = false;
+    }
+    if (fieldName === "startTime" || fieldName === "endTime") {
+      const calculatedHours = hoursBetweenTimes(next.startTime, next.endTime);
+      if (calculatedHours !== null) next.hours = calculatedHours;
+    }
+  }
+  return next;
+}
+
 export function resetHourRow(row) {
   return {
     ...row,

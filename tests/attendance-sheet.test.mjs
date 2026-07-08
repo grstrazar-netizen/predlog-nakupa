@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   ATTENDANCE_MIN_ROWS,
   ATTENDANCE_ROWS_PER_PAGE,
+  attendanceParticipantEmailDisplay,
   attendanceVisibleRowCount,
   attendanceSheetFromImportGroup,
   attendanceStatistics,
@@ -86,6 +87,34 @@ bor@example.com,Delavnica,09:00,2026-06-15,Bor,Kovač,False`;
   assert.equal(photoConsentLabel(group.participants[1].photoConsent), "✕");
   assert.equal(normalizePhotoConsent("Da"), true);
   assert.equal(normalizePhotoConsent("Ne"), false);
+});
+
+test("parses child-program Wagtail CSV rows into child participants", () => {
+  const csv = `email,event,start_time,start_day,name,surname,no. children,allow_photos,question 0,question 1
+stars1@example.com,Mali mojster: Mizarski tečaj za otroke,10:00:00,2026-07-06,Maja,Novak,1,False,Opremo v delavnicah bom uporabljal_a na lastno odgovornost. -> Da,Ali dovoljujete fotografiranje in snemanje izključno za potrebe promocije programa Centra Rog? -> Da
+↳ (child),,,,Liam,Žigon,,,,,
+stars2@example.com,Mali mojster: Mizarski tečaj za otroke,10:00:00,2026-07-06,,,1,True,Opremo v delavnicah bom uporabljal_a na lastno odgovornost. -> Da,Ali dovoljujete fotografiranje in snemanje izključno za potrebe promocije programa Centra Rog? -> Ne
+↳ (child),,,,Dmytro,Lysenko,,,,,`;
+
+  const [group] = parseWagtailAttendanceCsv(csv, "otroski-program.csv");
+
+  assert.equal(group.programName, "Mali mojster: Mizarski tečaj za otroke");
+  assert.equal(group.eventDate, "2026-07-06");
+  assert.equal(group.eventTime, "10:00");
+  assert.deepEqual(
+    group.participants.map((participant) => [
+      participant.firstName,
+      participant.lastName,
+      participant.email,
+      participant.contactName,
+      attendanceParticipantEmailDisplay(participant),
+      participant.photoConsent
+    ]),
+    [
+      ["Liam", "Žigon", "stars1@example.com", "Maja Novak", "Maja Novak - stars1@example.com", true],
+      ["Dmytro", "Lysenko", "stars2@example.com", "", "stars2@example.com", false]
+    ]
+  );
 });
 
 test("reports missing required Wagtail headers", () => {

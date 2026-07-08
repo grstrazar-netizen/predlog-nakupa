@@ -39,7 +39,7 @@ const REQUIRED_CSV_HEADERS = Object.freeze([
   "surname",
   "email"
 ]);
-const OPTIONAL_CSV_HEADERS = Object.freeze(["allow_photos"]);
+const OPTIONAL_CSV_HEADERS = Object.freeze(["allow_photos", "no. children"]);
 
 function localTimeValue(date = new Date()) {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
@@ -81,10 +81,18 @@ export function createAttendanceParticipant(values = {}) {
     firstName: normalizedText(values.firstName),
     lastName: normalizedText(values.lastName),
     email: normalizedText(values.email).toLocaleLowerCase("sl-SI"),
+    contactName: normalizedText(values.contactName),
     photoConsent: normalizePhotoConsent(values.photoConsent),
     attended: Boolean(values.attended),
     duplicateEmail: Boolean(values.duplicateEmail)
   };
+}
+
+export function attendanceParticipantEmailDisplay(participant) {
+  const email = normalizedText(participant?.email);
+  const contactName = normalizedText(participant?.contactName);
+  if (contactName && email) return `${contactName} - ${email}`;
+  return email || contactName;
 }
 
 export function normalizeAttendanceCategories(categories = []) {
@@ -206,6 +214,35 @@ function csvHeaderIndexes(headerRow) {
   return indexes;
 }
 
+function isChildRegistrationRow(row, indexes) {
+  const emailCell = normalizedSearch(row[indexes.email]);
+  return emailCell.includes("child") || emailCell.includes("otrok");
+}
+
+function photoConsentFromQuestion(row = []) {
+  for (const cell of row) {
+    const text = normalizedText(cell);
+    const normalized = normalizedSearch(text);
+    if (!normalized.includes("fotograf") && !normalized.includes("snemanj")) continue;
+    const answer = text.includes("->") ? text.split("->").pop() : text;
+    const consent = normalizePhotoConsent(answer);
+    if (consent !== null) return consent;
+  }
+  return null;
+}
+
+function photoConsentFromRow(row, indexes) {
+  const questionConsent = photoConsentFromQuestion(row);
+  if (questionConsent !== null) return questionConsent;
+  return indexes.allow_photos === undefined
+    ? null
+    : normalizePhotoConsent(row[indexes.allow_photos]);
+}
+
+function rowDeclaresChildren(row, indexes) {
+  return indexes["no. children"] !== undefined && Boolean(normalizedText(row[indexes["no. children"]]));
+}
+
 function markDuplicateEmails(participants) {
   const counts = new Map();
   participants.forEach((participant) => {
@@ -240,6 +277,8 @@ export function parseWagtailAttendanceCsv(text, fileName = "") {
     sourceFileName: normalizedText(fileName),
     participants: []
   };
+  let currentRegistration = null;
+
   parsed.rows.slice(1).forEach((row) => {
     const programName = normalizedText(row[indexes.event]);
     const eventDate = normalizedText(row[indexes.start_day]).slice(0, 10);
@@ -247,15 +286,44 @@ export function parseWagtailAttendanceCsv(text, fileName = "") {
     const firstName = normalizedText(row[indexes.name]);
     const lastName = normalizedText(row[indexes.surname]);
     const email = normalizedText(row[indexes.email]);
-    const photoConsent =
-      indexes.allow_photos === undefined
-        ? null
-        : normalizePhotoConsent(row[indexes.allow_photos]);
+    const photoConsent = photoConsentFromRow(row, indexes);
+    const childRow = isChildRegistrationRow(row, indexes);
+    const registeredChildren = rowDeclaresChildren(row, indexes);
+    const contactName = normalizedText(`${firstName} ${lastName}`);
+
+    if (childRow && currentRegistration) {
+      if (![firstName, lastName, currentRegistration.email].some(Boolean)) return;
+      group.participants.push(
+        createAttendanceParticipant({
+          firstName,
+          lastName,
+          email: currentRegistration.email,
+          contactName: currentRegistration.contactName,
+          photoConsent: currentRegistration.photoConsent
+        })
+      );
+      return;
+    }
+
     if (![programName, eventDate, eventTime, firstName, lastName, email].some(Boolean)) return;
 
     if (!group.programName && programName) group.programName = programName;
     if (!group.eventDate && eventDate) group.eventDate = eventDate;
     if (!group.eventTime && eventTime) group.eventTime = eventTime;
+
+    if (email || programName || eventDate || eventTime) {
+      currentRegistration = {
+        email,
+        contactName,
+        photoConsent,
+        programName,
+        eventDate,
+        eventTime
+      };
+    }
+
+    if (registeredChildren || (!firstName && !lastName)) return;
+
     group.participants.push(
       createAttendanceParticipant({ firstName, lastName, email, photoConsent })
     );
@@ -387,6 +455,7 @@ export function searchAttendance(sheets, query) {
         firstName: participant.firstName,
         lastName: participant.lastName,
         email: participant.email,
+        contactName: participant.contactName,
         attended: Boolean(participant.attended),
         programName: sheet.programName,
         categoryId: sheet.categoryId,
@@ -395,7 +464,7 @@ export function searchAttendance(sheets, query) {
       }))
     )
     .filter((record) =>
-      normalizedSearch(`${record.firstName} ${record.lastName} ${record.email}`).includes(needle)
+      normalizedSearch(`${record.firstName} ${record.lastName} ${record.contactName} ${record.email}`).includes(needle)
     )
     .sort((left, right) => String(right.eventDate || "").localeCompare(String(left.eventDate || "")));
 }

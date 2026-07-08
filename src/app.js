@@ -41,7 +41,7 @@ import {
   saveProposal,
   saveProposalBundle
 } from "./db.js";
-import { createCombinedPdfBlob, createProposalPdfBlob } from "./pdf.js";
+import { createCombinedPdfBlob } from "./pdf.js";
 import { createMaterialIssuePdfBlob } from "./material-issue-pdf.js";
 import { createAttendanceSheetPdfBlob } from "./attendance-sheet-pdf.js";
 import { createHourReportPdfBlob, createHourReportsPdfBlob } from "./hour-report-pdf.js";
@@ -56,6 +56,7 @@ import {
   profileRateForDate,
   removeHourReportRow,
   resetHourRow,
+  updateHourReportRow,
   updateReportProfile,
   validateHourReport
 } from "./hour-report.js";
@@ -73,6 +74,7 @@ import {
   ATTENDANCE_CATEGORY_ASSET_ID,
   ATTENDANCE_ROWS_PER_PAGE,
   DEFAULT_ATTENDANCE_CATEGORIES,
+  attendanceParticipantEmailDisplay,
   attendanceVisibleRowCount,
   attendanceSheetFromImportGroup,
   attendanceSheetWithSaveMetadata,
@@ -953,7 +955,8 @@ function renderProposalPreviewModal() {
                     ? `<button class="button button-solid" type="button" data-action="save-proposal-preview">${icon("save")} Shrani spremembe</button>
                       <button class="button button-outline" type="button" data-action="finish-proposal-preview-edit">${icon("arrow-left")} Predogled</button>`
                     : `<button class="button button-solid" type="button" data-action="edit-proposal-preview">${icon("pencil")} Uredi dokument</button>
-                      <button class="button button-outline" type="button" data-action="download-preview-proposal">${icon("download")} Export PDF</button>`
+                      <button class="button button-outline" type="button" data-action="download-preview-proposal">${icon("download")} Export PDF</button>
+                      <button class="button button-outline" type="button" data-action="print-preview-proposal">${icon("printer")} Natisni</button>`
                 }
               </div>
             </div>
@@ -2290,8 +2293,21 @@ function attendanceCategoryLabel(categoryId) {
   return state.attendanceCategories.find((category) => category.id === categoryId)?.label || "Brez kategorije";
 }
 
+function parseAttendanceContactEmail(value) {
+  const text = String(value || "").trim().replace(/\s+/g, " ");
+  const separator = /\s+-\s+/;
+  if (!separator.test(text)) return { contactName: "", email: text };
+  const [contactName, ...emailParts] = text.split(separator);
+  return {
+    contactName: contactName.trim(),
+    email: emailParts.join(" - ").trim()
+  };
+}
+
 function attendanceParticipantMarkup(participant, displayIndex) {
   const prefix = `participants.${participant.id}`;
+  const emailDisplay = attendanceParticipantEmailDisplay(participant);
+  const emailFieldName = participant.contactName ? "contactEmail" : "email";
   return `
     <tr data-attendance-participant-row="${escapeHtml(participant.id)}">
       <td class="attendance-index-cell">${displayIndex}</td>
@@ -2320,11 +2336,11 @@ function attendanceParticipantMarkup(participant, displayIndex) {
       <td class="${participant.duplicateEmail ? "attendance-duplicate-cell" : ""}">
         <input
           class="${attendanceValidationClass("attendance-cell-input", `${prefix}.email`)}"
-          data-attendance-participant-field="email"
+          data-attendance-participant-field="${emailFieldName}"
           data-attendance-participant-id="${escapeHtml(participant.id)}"
-          value="${escapeHtml(participant.email)}"
+          value="${escapeHtml(emailDisplay)}"
           inputmode="email"
-          aria-label="E-pošta udeleženca ${displayIndex}"
+          aria-label="E-pošta oziroma kontakt starša za udeleženca ${displayIndex}"
           ${attendanceValidationAttrs(`${prefix}.email`)}
         />
         ${participant.duplicateEmail ? `<span class="attendance-duplicate-hint">${icon("copy")} Podvojen naslov</span>` : ""}
@@ -2827,7 +2843,7 @@ function renderAttendanceSheet() {
                       ${participants.map((participant) => `
                         <label>
                           <input type="checkbox" data-attendance-confirm="${escapeHtml(participant.id)}" ${participant.attended ? "checked" : ""} />
-                          <span><strong>${escapeHtml(`${participant.firstName} ${participant.lastName}`.trim() || "Brez imena")}</strong><small>${escapeHtml(participant.email)}</small></span>
+                          <span><strong>${escapeHtml(`${participant.firstName} ${participant.lastName}`.trim() || "Brez imena")}</strong><small>${escapeHtml(attendanceParticipantEmailDisplay(participant))}</small></span>
                         </label>
                       `).join("")}
                     </div>`
@@ -3509,6 +3525,12 @@ function attendanceValidationSelector(fieldName) {
   if (fieldName === "participants") return "[data-action='add-attendance-participant']";
   if (fieldName.startsWith("participants.")) {
     const [, participantId, participantField] = fieldName.split(".");
+    if (participantField === "email") {
+      return [
+        `[data-attendance-participant-id="${CSS.escape(participantId)}"][data-attendance-participant-field="email"]`,
+        `[data-attendance-participant-id="${CSS.escape(participantId)}"][data-attendance-participant-field="contactEmail"]`
+      ].join(", ");
+    }
     return `[data-attendance-participant-id="${CSS.escape(participantId)}"][data-attendance-participant-field="${CSS.escape(participantField)}"]`;
   }
   return `[data-attendance-field="${CSS.escape(fieldName)}"]`;
@@ -3649,14 +3671,21 @@ function bindAttendanceEvents() {
       );
       if (!participant) return;
       const name = event.currentTarget.dataset.attendanceParticipantField;
-      participant[name] =
-        name === "photoConsent"
-          ? normalizePhotoConsent(event.currentTarget.value)
-          : event.currentTarget.value;
-      clearAttendanceValidationField(`participants.${participant.id}.${name}`);
+      if (name === "contactEmail") {
+        const parsed = parseAttendanceContactEmail(event.currentTarget.value);
+        participant.contactName = parsed.contactName;
+        participant.email = parsed.email;
+        clearAttendanceValidationField(`participants.${participant.id}.email`);
+      } else {
+        participant[name] =
+          name === "photoConsent"
+            ? normalizePhotoConsent(event.currentTarget.value)
+            : event.currentTarget.value;
+        clearAttendanceValidationField(`participants.${participant.id}.${name}`);
+      }
       markDirty();
     });
-    if (field.dataset.attendanceParticipantField === "email") {
+    if (["email", "contactEmail"].includes(field.dataset.attendanceParticipantField)) {
       field.addEventListener("blur", () => {
         updateAttendanceDuplicateFlags();
         render();
@@ -4107,25 +4136,9 @@ function updateHourProfileField(fieldName, value) {
 
 function updateHourRow(rowId, fieldName, value) {
   const report = selectedHourReport();
-  const row = report?.rows.find((item) => item.id === rowId);
-  if (!row) return;
-  if (fieldName === "hours") {
-    row.hours = normalizeHours(value);
-  } else if (fieldName === "rateCents") {
-    row.rateCents = normalizeRateCents(value);
-    row.rateOverridden = true;
-  } else {
-    row[fieldName] = value;
-    if (fieldName === "date" && !row.rateOverridden) {
-      const rate = profileRateForDate(report.profile, row.date);
-      row.rateCents = rate;
-      row.originalRateCents = rate;
-    }
-    if (fieldName === "startTime" || fieldName === "endTime") {
-      const calculatedHours = hoursBetweenTimes(row.startTime, row.endTime);
-      if (calculatedHours !== null) row.hours = calculatedHours;
-    }
-  }
+  const index = report?.rows.findIndex((item) => item.id === rowId) ?? -1;
+  if (!report || index < 0) return;
+  report.rows[index] = updateHourReportRow(report.rows[index], fieldName, value, report.profile);
   markDirty();
 }
 
@@ -5551,6 +5564,8 @@ async function handleAction(action, event) {
       await finishProposalPreviewEdit();
     } else if (action === "download-preview-proposal") {
       await downloadProposalPreviewPdf();
+    } else if (action === "print-preview-proposal") {
+      await printProposalPreviewPdf();
     } else if (action === "duplicate-proposal-preview") {
       await duplicateProposalPreview();
     } else if (action === "delete-proposal-preview") {
@@ -5721,16 +5736,65 @@ function updateProposalPreviewZoom(delta) {
   render();
 }
 
+function isMatchingAttachment(attachment, proposal) {
+  return Boolean(
+    attachment?.blob &&
+    proposal?.offerAttachmentId &&
+    attachment.id === proposal.offerAttachmentId
+  );
+}
+
+async function getProposalAttachmentForPdf(proposal) {
+  if (!proposal?.offerAttachmentId) return null;
+
+  const inMemoryAttachment = [state.attachment, state.proposalPreviewAttachment].find((attachment) =>
+    isMatchingAttachment(attachment, proposal)
+  );
+  if (inMemoryAttachment) return inMemoryAttachment;
+
+  const storedAttachment = await getAttachment(proposal.offerAttachmentId);
+  if (storedAttachment?.blob) return storedAttachment;
+
+  throw new Error("Pripete ponudbe ni mogoče prebrati. Poskusi dokument najprej shraniti in nato ponovno natisniti.");
+}
+
+async function createProposalExportBlob(proposal) {
+  const attachment = await getProposalAttachmentForPdf(proposal);
+  return createCombinedPdfBlob(proposal, attachment, state.signatureAsset);
+}
+
 async function downloadProposalPreviewPdf() {
   const proposal = state.proposals.find((item) => item.id === state.proposalPreviewId);
   if (!proposal) return;
 
   setBusy(true);
   try {
-    const attachment = proposal.offerAttachmentId ? await getAttachment(proposal.offerAttachmentId) : null;
-    const pdfBlob = await createCombinedPdfBlob(proposal, attachment, state.signatureAsset);
+    const pdfBlob = await createProposalExportBlob(proposal);
     downloadBlob(pdfBlob, `${safeFileName(`predlog-${proposal.serial || proposal.id}`)}.pdf`);
     showToast("Dokument PDF je pripravljen za prenos.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function printProposalPreviewPdf() {
+  const proposal = state.proposals.find((item) => item.id === state.proposalPreviewId);
+  if (!proposal) return;
+
+  setBusy(true);
+  try {
+    const pdfBlob = await createProposalExportBlob(proposal);
+    const fileName = `${safeFileName(`predlog-${proposal.serial || proposal.id}`)}.pdf`;
+    const url = URL.createObjectURL(pdfBlob);
+    const printWindow = window.open(url, "_blank");
+    if (!printWindow) {
+      downloadBlob(pdfBlob, fileName);
+      showToast("Brskalnik je blokiral tiskanje, zato sem prenesel dokument PDF.");
+    } else {
+      printWindow.addEventListener("load", () => printWindow.print(), { once: true });
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      showToast("Dokument PDF je pripravljen za tiskanje.");
+    }
   } finally {
     setBusy(false);
   }
@@ -6497,14 +6561,7 @@ async function exportPdf(mode) {
   try {
     const saved = await saveCurrentDocument({ silent: true });
     if (!saved) return;
-    const attachment =
-      mode === "download" && saved.offerAttachmentId
-        ? await getAttachment(saved.offerAttachmentId)
-        : null;
-    const pdfBlob =
-      mode === "print"
-        ? await createProposalPdfBlob(saved, state.signatureAsset)
-        : await createCombinedPdfBlob(saved, attachment, state.signatureAsset);
+    const pdfBlob = await createProposalExportBlob(saved);
     const fileName = `${safeFileName(`predlog-${saved.serial}`)}.pdf`;
 
     if (mode === "print") {

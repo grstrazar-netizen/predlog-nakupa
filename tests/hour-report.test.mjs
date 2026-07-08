@@ -11,6 +11,7 @@ import {
   hourReportTotals,
   parseConnecteamWorkbook,
   removeHourReportRow,
+  updateHourReportRow,
   updateReportProfile
 } from "../src/hour-report.js";
 
@@ -180,6 +181,39 @@ test("calculates worked hours from editable start and end times", () => {
   assert.equal(hoursBetweenTimes("08:15", "16:45"), 8.5);
   assert.equal(hoursBetweenTimes("22:00", "02:30"), 4.5);
   assert.equal(hoursBetweenTimes("", "16:00"), null);
+});
+
+test("keeps row rate aligned with the edited shift date", () => {
+  const profile = createHourProfile("Ana Novak", {
+    weekdayRateCents: 1500,
+    saturdayRateCents: 1600,
+    sundayRateCents: 1600
+  });
+  const row = {
+    id: "row-1",
+    date: "2026-06-06",
+    startTime: "09:00",
+    endTime: "15:00",
+    hours: 6,
+    originalHours: 6,
+    rateCents: 1600,
+    originalRateCents: 1600,
+    rateOverridden: false
+  };
+
+  const monday = updateHourReportRow(row, "date", "2026-06-08", profile);
+  assert.equal(monday.rateCents, 1500);
+  assert.equal(monday.originalRateCents, 1500);
+  assert.equal(monday.rateOverridden, false);
+
+  const manual = updateHourReportRow(monday, "rateCents", "18,00", profile);
+  assert.equal(manual.rateCents, 1800);
+  assert.equal(manual.rateOverridden, true);
+
+  const saturday = updateHourReportRow(manual, "date", "2026-06-13", profile);
+  assert.equal(saturday.rateCents, 1600);
+  assert.equal(saturday.originalRateCents, 1600);
+  assert.equal(saturday.rateOverridden, false);
 });
 
 test("recalculates rows from a profile and groups the final values", () => {
