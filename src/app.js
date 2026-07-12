@@ -139,6 +139,7 @@ import {
 
 const root = document.getElementById("app");
 const SIGNATURE_ASSET_ID = "lab-manager-signature";
+const COMPANY_DIRECTORY_ASSET_ID = "center-rog-company-directory-v1";
 const MAX_SIGNATURE_FILE_SIZE = 2 * 1024 * 1024;
 
 const KEYBOARD_SHORTCUTS = {
@@ -181,6 +182,11 @@ const state = {
   persistedAttachmentId: "",
   signatureAsset: null,
   signatureUrl: "",
+  companies: [],
+  companyDirectory: {
+    editingId: "",
+    error: ""
+  },
   historyModalOpen: false,
   proposalPreviewId: "",
   proposalPreviewMode: "view",
@@ -418,6 +424,112 @@ function renderSignaturePanel() {
               </button>`
         }
         <p class="signature-storage-note">${icon("hard-drive")} Podpis je shranjen samo v tem brskalniku in na tem računalniku.</p>
+      </div>
+    </section>
+  `;
+}
+
+function normalizeCompanyDirectory(companies) {
+  if (!Array.isArray(companies)) return [];
+  const seen = new Set();
+  return companies
+    .map((company) => ({
+      id: String(company?.id || generateId()),
+      name: String(company?.name || "").trim(),
+      address: String(company?.address || "").trim(),
+      taxNumber: String(company?.taxNumber || "").trim(),
+      createdAt: company?.createdAt || "",
+      updatedAt: company?.updatedAt || ""
+    }))
+    .filter((company) => company.name && company.address)
+    .filter((company) => {
+      const key = company.name.toLocaleLowerCase("sl-SI");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "sl-SI"));
+}
+
+function editingCompany() {
+  return state.companies.find((company) => company.id === state.companyDirectory.editingId) || null;
+}
+
+function companyDirectorySuggestions(currentValue = "") {
+  const lower = String(currentValue || "").trim().toLocaleLowerCase("sl-SI");
+  const values = [
+    ...state.companies.map((company) => company.name),
+    ...uniqueSuggestions(state.proposals, "company", currentValue)
+  ].filter(Boolean);
+  const unique = values.filter(
+    (value, index) =>
+      values.findIndex((candidate) => candidate.toLocaleLowerCase("sl-SI") === value.toLocaleLowerCase("sl-SI")) === index
+  );
+  return (lower
+    ? unique.filter((value) => value.toLocaleLowerCase("sl-SI").includes(lower))
+    : unique
+  ).slice(0, 6);
+}
+
+function renderCompanyDirectoryPanel() {
+  const editing = editingCompany();
+  const hasCompanies = state.companies.length > 0;
+  return `
+    <section class="panel company-directory-panel">
+      <div class="panel-header">
+        <span class="panel-icon">${icon("building-2")}</span>
+        <span class="panel-title">Podjetja</span>
+      </div>
+      <div class="panel-body">
+        <p class="company-directory-intro">Shrani podatke partnerjev za hitrejši in pravilnejši vnos v dokumente.</p>
+        <form class="company-directory-form" data-company-directory-form>
+          <label>
+            <span>Ime podjetja <b aria-hidden="true">*</b></span>
+            <input type="text" name="name" value="${escapeHtml(editing?.name || "")}" autocomplete="organization" required />
+          </label>
+          <label>
+            <span>Naslov <b aria-hidden="true">*</b></span>
+            <textarea name="address" rows="2" required>${escapeHtml(editing?.address || "")}</textarea>
+          </label>
+          <label>
+            <span>Davčna številka <small>neobvezno</small></span>
+            <input type="text" name="taxNumber" value="${escapeHtml(editing?.taxNumber || "")}" inputmode="numeric" autocomplete="off" />
+          </label>
+          ${
+            state.companyDirectory.error
+              ? `<p class="field-error" role="alert">${escapeHtml(state.companyDirectory.error)}</p>`
+              : ""
+          }
+          <div class="company-directory-actions">
+            ${
+              editing
+                ? `<button class="button button-outline" type="button" data-action="cancel-company-edit">Prekliči</button>`
+                : ""
+            }
+            <button class="button button-solid" type="submit">${editing ? "Shrani spremembe" : "Dodaj podjetje"}</button>
+          </div>
+        </form>
+        ${
+          hasCompanies
+            ? `<div class="company-directory-list" aria-label="Shranjena podjetja">
+                ${state.companies
+                  .map(
+                    (company) => `
+                      <div class="company-directory-row">
+                        <button class="company-directory-select" type="button" data-action="edit-company" data-company-id="${escapeHtml(company.id)}" aria-label="Uredi podjetje ${escapeHtml(company.name)}">
+                          <strong>${escapeHtml(company.name)}</strong>
+                          <span>${escapeHtml(company.address)}</span>
+                          ${company.taxNumber ? `<small>Davčna št.: ${escapeHtml(company.taxNumber)}</small>` : ""}
+                        </button>
+                        <button class="button button-icon-only button-ghost company-directory-delete" type="button" data-action="delete-company" data-company-id="${escapeHtml(company.id)}" aria-label="Odstrani podjetje ${escapeHtml(company.name)}" title="Odstrani podjetje">
+                          ${icon("trash-2")}
+                        </button>
+                      </div>`
+                  )
+                  .join("")}
+              </div>`
+            : `<p class="empty-text">Dodaj podjetje, ki ga želiš imeti pri roki za naslednje predloge.</p>`
+        }
       </div>
     </section>
   `;
@@ -3394,6 +3506,8 @@ function render() {
             </div>
           </section>
 
+          ${renderCompanyDirectoryPanel()}
+
           <section class="panel">
             <div class="panel-header">
               <span class="panel-icon">${icon("wallet")}</span>
@@ -3592,6 +3706,11 @@ function bindEvents() {
     if (field.dataset.smartField) {
       field.addEventListener("focus", (event) => showSuggestions(event.currentTarget));
     }
+  });
+
+  document.querySelector("[data-company-directory-form]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void saveCompanyDirectoryEntry(event.currentTarget);
   });
 
   document.querySelectorAll("[data-action]").forEach((button) => {
@@ -5288,7 +5407,10 @@ function showSuggestions(input) {
   if (!wrapper || !field) return;
 
   wrapper.querySelector(".suggestion-popover")?.remove();
-  const suggestions = uniqueSuggestions(state.proposals, field, input.value);
+  const suggestions =
+    field === "company"
+      ? companyDirectorySuggestions(input.value)
+      : uniqueSuggestions(state.proposals, field, input.value);
   if (!suggestions.length) return;
 
   const popover = document.createElement("div");
@@ -5868,6 +5990,16 @@ async function handleAction(action, event) {
       await removeSignature();
     } else if (action === "remove-attachment") {
       await removeAttachment();
+    } else if (action === "edit-company") {
+      state.companyDirectory.editingId = event?.currentTarget?.dataset.companyId || "";
+      state.companyDirectory.error = "";
+      render();
+    } else if (action === "cancel-company-edit") {
+      state.companyDirectory.editingId = "";
+      state.companyDirectory.error = "";
+      render();
+    } else if (action === "delete-company") {
+      await deleteCompanyDirectoryEntry(event?.currentTarget?.dataset.companyId);
     } else if (action === "download") {
       if (state.documentType === "materialIssue") {
         await exportMaterialIssuePdf("download");
@@ -5965,6 +6097,78 @@ async function handleAction(action, event) {
     console.error(error);
     showToast(error.message || "Prišlo je do napake.");
   }
+}
+
+async function saveCompanyDirectoryEntry(form) {
+  const formData = new FormData(form);
+  const name = String(formData.get("name") || "").trim();
+  const address = String(formData.get("address") || "").trim();
+  const taxNumber = String(formData.get("taxNumber") || "").trim();
+
+  if (!name || !address) {
+    state.companyDirectory.error = "Ime podjetja in naslov sta obvezna.";
+    render();
+    window.requestAnimationFrame(() => document.querySelector("[data-company-directory-form] input[name='name']")?.focus());
+    return;
+  }
+
+  const editingId = state.companyDirectory.editingId;
+  const duplicate = state.companies.find(
+    (company) =>
+      company.id !== editingId &&
+      company.name.toLocaleLowerCase("sl-SI") === name.toLocaleLowerCase("sl-SI")
+  );
+  if (duplicate) {
+    state.companyDirectory.error = "Podjetje s tem imenom je že v imeniku.";
+    render();
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const existing = state.companies.find((company) => company.id === editingId);
+  const nextCompany = {
+    id: existing?.id || generateId(),
+    name,
+    address,
+    taxNumber,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  };
+  const nextCompanies = normalizeCompanyDirectory([
+    ...state.companies.filter((company) => company.id !== nextCompany.id),
+    nextCompany
+  ]);
+
+  await saveAsset({
+    id: COMPANY_DIRECTORY_ASSET_ID,
+    type: "company-directory",
+    version: 1,
+    companies: nextCompanies,
+    updatedAt: now
+  });
+  state.companies = nextCompanies;
+  state.companyDirectory = { editingId: "", error: "" };
+  render();
+  showToast(existing ? "Podatki podjetja so posodobljeni." : "Podjetje je dodano v imenik.");
+}
+
+async function deleteCompanyDirectoryEntry(companyId) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company) return;
+  if (!window.confirm(`Ali želiš odstraniti podjetje \"${company.name}\" iz imenika?`)) return;
+
+  const companies = state.companies.filter((item) => item.id !== companyId);
+  await saveAsset({
+    id: COMPANY_DIRECTORY_ASSET_ID,
+    type: "company-directory",
+    version: 1,
+    companies,
+    updatedAt: new Date().toISOString()
+  });
+  state.companies = companies;
+  state.companyDirectory = { editingId: "", error: "" };
+  render();
+  showToast("Podjetje je odstranjeno iz imenika.");
 }
 
 function toggleToolsPanel() {
@@ -6959,7 +7163,8 @@ async function init() {
     signatureAsset,
     attendanceCategoryAsset,
     hourSecurityAsset,
-    backupConfig
+    backupConfig,
+    companyDirectoryAsset
   ] = await Promise.all([
     getAllProposals(),
     getAllMaterialIssues(),
@@ -6968,7 +7173,8 @@ async function init() {
     getAsset(SIGNATURE_ASSET_ID),
     getAsset(ATTENDANCE_CATEGORY_ASSET_ID),
     getAsset(HOUR_SECURITY_ASSET_ID),
-    getAsset(BACKUP_CONFIG_ASSET_ID)
+    getAsset(BACKUP_CONFIG_ASSET_ID),
+    getAsset(COMPANY_DIRECTORY_ASSET_ID)
   ]);
   state.proposals = sortRecent(proposals);
   state.materialIssues = sortRecent(materialIssues);
@@ -7016,6 +7222,7 @@ async function init() {
   }
   state.attendanceCategories = normalizeAttendanceCategories(attendanceCategoryAsset?.categories || []);
   state.dataSafety.config = backupConfig || null;
+  state.companies = normalizeCompanyDirectory(companyDirectoryAsset?.companies);
   setSignatureAsset(signatureAsset);
   const last = state.proposals[0];
   state.current = last ? createBlankProposal(last) : createBlankProposal();

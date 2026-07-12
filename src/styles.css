@@ -2456,13 +2456,141 @@ textarea.doc-purpose {
 .approval-options {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
-  border: 1px solid #d4d4d8;
-  border-radius: 999px;
+  gap: 6px;
+  padding: 0;
   color: #27272a;
   font-size: 14px;
   font-weight: 680;
+}
+
+.company-directory-panel .panel-body {
+  gap: 14px;
+}
+
+.company-directory-intro {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.company-directory-form {
+  display: grid;
+  gap: 9px;
+}
+
+.company-directory-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.company-directory-form label > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.company-directory-form b {
+  color: #dc2626;
+}
+
+.company-directory-form small {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.company-directory-form input,
+.company-directory-form textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 13px;
+}
+
+.company-directory-form input {
+  height: 34px;
+  padding: 0 9px;
+}
+
+.company-directory-form textarea {
+  min-height: 52px;
+  padding: 7px 9px;
+  resize: vertical;
+}
+
+.company-directory-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.company-directory-actions .button {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.company-directory-list {
+  display: grid;
+  max-height: 270px;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+}
+
+.company-directory-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 4px;
+  align-items: start;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.company-directory-select {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.company-directory-select:hover strong {
+  text-decoration: underline;
+}
+
+.company-directory-select strong,
+.company-directory-select span,
+.company-directory-select small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.company-directory-select strong {
+  font-size: 12px;
+}
+
+.company-directory-select span,
+.company-directory-select small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.company-directory-delete {
+  width: 30px;
+  height: 30px;
+  color: #b91c1c;
 }
 
 .director-block {

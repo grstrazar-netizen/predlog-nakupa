@@ -1,16 +1,15 @@
-export const APP_VERSION = "1.0.0";
+export const APP_VERSION = "1.0.1";
 export const APP_VERSION_STORAGE_KEY = "center-rog-evidence:last-seen-version";
 export const UPDATE_CHECK_INTERVAL_MS = 15 * 60 * 1000;
 
 export const CURRENT_RELEASE = {
   version: APP_VERSION,
-  releasedAt: "2026-07-11",
-  title: "Varnejši podatki in zanesljivejše posodobitve",
+  releasedAt: "2026-07-12",
+  title: "Urejen imenik podjetij",
   notes: [
-    "Dodane so šifrirane varnostne kopije vseh evidenc, priponk in podpisov.",
-    "Chrome in Edge lahko po enkratni izbiri mape pripravita dnevni backup ob 19.30.",
-    "Aplikacija zdaj jasno opozori, ko je na voljo nova različica.",
-    "Dodani so večbrskalniški testi najpomembnejših uporabniških tokov."
+    "Dodana je lokalna kartica za dodajanje, popravljanje in odstranjevanje podjetij.",
+    "Shranjena podjetja so vključena med predloge pri vnosu partnerja.",
+    "Odstranjena je obroba pri odobritvi DA / NE."
   ]
 };
 
