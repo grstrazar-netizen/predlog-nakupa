@@ -4,6 +4,7 @@ import { webcrypto } from "node:crypto";
 
 import {
   createHourSecurity,
+  createUnprotectedHourSecurity,
   decryptHourProfiles,
   encryptHourProfiles,
   replaceHourPin,
@@ -19,6 +20,13 @@ test("sprejme samo šestmestni številčni PIN", () => {
   assert.equal(validateHourPin("12345"), false);
   assert.equal(validateHourPin("1234567"), false);
   assert.equal(validateHourPin("12a456"), false);
+});
+
+test("nezaščiteni način je izrecno označen in ne vsebuje PIN podatkov", () => {
+  const config = createUnprotectedHourSecurity();
+  assert.equal(config.mode, "unprotected");
+  assert.equal("pinWrap" in config, false);
+  assert.equal("pinSalt" in config, false);
 });
 
 test("PIN odklene šifrirane profile", async () => {
@@ -107,6 +115,7 @@ test("prva nastavitev zahteva samo PIN in njegovo potrditev", () => {
 
   assert.match(html, /data-hour-security-setup/);
   assert.match(html, /name="pinConfirmation"/);
+  assert.match(html, /data-hour-security-action="disable-pin-confirm"/);
   assert.doesNotMatch(html, /Varnostno vprašanje|Varnostni odgovor/);
 });
 

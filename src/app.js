@@ -92,9 +92,11 @@ import {
 import {
   HOUR_SECURITY_ASSET_ID,
   createHourSecurity,
+  createUnprotectedHourSecurity,
   decryptHourProfiles,
   encryptHourProfiles,
   isEncryptedHourProfileRecord,
+  isUnprotectedHourSecurity,
   replaceHourPin,
   unlockHourDataKey,
   validateHourPin
@@ -1507,7 +1509,7 @@ function attendanceSaveState() {
 }
 
 function hourReportsSaveState() {
-  if (state.hourSecurity.status !== "unlocked") {
+  if (!hourReportsUnlocked()) {
     return {
       kind: "locked",
       label: "Zaklenjeno",
@@ -3338,7 +3340,7 @@ function selectedHourReport() {
 }
 
 function hourReportsUnlocked() {
-  return (
+  return state.hourSecurity.status === "unprotected" || (
     state.hourSecurity.status === "unlocked" &&
     Boolean(state.hourSecurity.activeKey)
   );
@@ -3373,6 +3375,7 @@ function hourSecurityViewState() {
     status: state.hourSecurity.status,
     screen: state.hourSecurity.screen,
     configured: Boolean(state.hourSecurity.config),
+    unprotected: state.hourSecurity.status === "unprotected",
     error: state.hourSecurity.error,
     failedAttempts: state.hourSecurity.failedAttempts,
     remainingSeconds
@@ -4303,6 +4306,52 @@ async function setupHourSecurity(form) {
   }
 }
 
+async function disableHourSecurity() {
+  setBusy(true);
+  try {
+    const config = createUnprotectedHourSecurity();
+    const profiles = state.hourProfiles.map((profile) =>
+      hourProfileWithMetadata(profile)
+    );
+    await saveHourSecurityBundle(config, profiles);
+    state.hourProfiles = profiles;
+    state.hourSecurity = {
+      ...state.hourSecurity,
+      status: "unprotected",
+      screen: "unprotected",
+      config,
+      profileRecords: profiles,
+      activeKey: null,
+      error: "",
+      failedAttempts: 0,
+      lockoutUntil: 0
+    };
+    clearDirty();
+    render();
+    showToast("Poročila ur so v tem brskalniku dostopna brez PIN-a.");
+  } catch (error) {
+    console.error(error);
+    setHourSecurityError("Nastavitve dostopa ni bilo mogoče shraniti.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+function enableHourSecuritySetup() {
+  state.hourSecurity = {
+    ...state.hourSecurity,
+    status: "unconfigured",
+    screen: "setup",
+    config: null,
+    profileRecords: [],
+    activeKey: null,
+    error: "",
+    failedAttempts: 0,
+    lockoutUntil: 0
+  };
+  render();
+}
+
 async function unlockHourReports(form) {
   if (state.hourSecurity.lockoutUntil > Date.now()) {
     setHourSecurityError("Počakaj do izteka varnostnega premora.");
@@ -4469,10 +4518,9 @@ async function saveHourProfiles({ silent = false } = {}) {
     profilesById.set(report.profile.id, hourProfileWithMetadata(report.profile));
   });
   state.hourProfiles = [...profilesById.values()];
-  const records = await encryptHourProfiles(
-    state.hourProfiles,
-    state.hourSecurity.activeKey
-  );
+  const records = state.hourSecurity.status === "unprotected"
+    ? state.hourProfiles
+    : await encryptHourProfiles(state.hourProfiles, state.hourSecurity.activeKey);
   await saveHourSecurityBundle(state.hourSecurity.config, records);
   state.hourSecurity.profileRecords = records;
   reports.forEach((report) => {
@@ -4764,9 +4812,18 @@ function bindHourReportEvents() {
       void resetHourSecurity(event.currentTarget);
     });
   document.querySelectorAll("[data-hour-security-action]").forEach((button) => {
-    button.addEventListener("click", () =>
-      setHourSecurityScreen(button.dataset.hourSecurityAction)
-    );
+    button.addEventListener("click", () => {
+      const action = button.dataset.hourSecurityAction;
+      if (action === "disable-pin") {
+        void disableHourSecurity();
+        return;
+      }
+      if (action === "enable-pin") {
+        enableHourSecuritySetup();
+        return;
+      }
+      setHourSecurityScreen(action);
+    });
   });
   document.querySelectorAll("[data-modal-window]").forEach((modal) => {
     modal.addEventListener("click", (event) => event.stopPropagation());
@@ -7180,7 +7237,20 @@ async function init() {
   state.materialIssues = sortRecent(materialIssues);
   state.attendanceSheets = sortRecent(attendanceSheets);
   const encryptedHourProfiles = hourProfiles.filter(isEncryptedHourProfileRecord);
-  if (hourSecurityAsset && encryptedHourProfiles.length === hourProfiles.length) {
+  if (isUnprotectedHourSecurity(hourSecurityAsset)) {
+    state.hourProfiles = hourProfiles.map((profile) =>
+      createHourProfile(profile.name, profile)
+    );
+    state.hourSecurity = {
+      ...state.hourSecurity,
+      status: "unprotected",
+      screen: "unprotected",
+      config: hourSecurityAsset,
+      profileRecords: hourProfiles,
+      activeKey: null,
+      error: ""
+    };
+  } else if (hourSecurityAsset && encryptedHourProfiles.length === hourProfiles.length) {
     state.hourProfiles = [];
     state.hourSecurity = {
       ...state.hourSecurity,

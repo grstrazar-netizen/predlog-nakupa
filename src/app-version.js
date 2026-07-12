@@ -1,14 +1,14 @@
-export const APP_VERSION = "1.0.1";
+export const APP_VERSION = "1.0.2";
 export const APP_VERSION_STORAGE_KEY = "center-rog-evidence:last-seen-version";
 export const UPDATE_CHECK_INTERVAL_MS = 15 * 60 * 1000;
 
 export const CURRENT_RELEASE = {
   version: APP_VERSION,
   releasedAt: "2026-07-12",
-  title: "Urejen imenik podjetij",
+  title: "Prilagodljiv dostop do Poročil ur",
   notes: [
     "Dodana je lokalna kartica za dodajanje, popravljanje in odstranjevanje podjetij.",
-    "Shranjena podjetja so vključena med predloge pri vnosu partnerja.",
+    "Poročila ur lahko zdaj uporabljaš s šestmestnim PIN-om ali brez njega.",
     "Odstranjena je obroba pri odobritvi DA / NE."
   ]
 };

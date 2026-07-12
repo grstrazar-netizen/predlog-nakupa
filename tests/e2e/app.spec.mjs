@@ -33,7 +33,7 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(
     ({ onboardingKey, versionKey }) => {
       localStorage.setItem(onboardingKey, "done");
-      localStorage.setItem(versionKey, "1.0.1");
+      localStorage.setItem(versionKey, "1.0.2");
     },
     { onboardingKey: ONBOARDING_KEY, versionKey: VERSION_KEY }
   );
@@ -45,7 +45,7 @@ test("loads all evidences and opens backup settings", async ({ page }) => {
   await expect(page.getByRole("tab")).toHaveCount(4);
   await page.getByRole("button", { name: "Odpri varnostne kopije" }).click();
   await expect(page.getByRole("heading", { name: "Varnostne kopije" })).toBeVisible();
-  await expect(page.getByText("Različica aplikacije 1.0.1")).toBeVisible();
+  await expect(page.getByText("Različica aplikacije 1.0.2")).toBeVisible();
 });
 
 test("creates an encrypted manual backup when folder access is unavailable", async ({ page }) => {

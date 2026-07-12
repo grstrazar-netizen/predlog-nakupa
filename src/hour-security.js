@@ -46,6 +46,22 @@ export function validateHourPin(pin) {
   return /^\d{6}$/.test(String(pin || ""));
 }
 
+export function createUnprotectedHourSecurity() {
+  const now = new Date().toISOString();
+  return {
+    id: HOUR_SECURITY_ASSET_ID,
+    type: "hour-report-security",
+    version: HOUR_SECURITY_VERSION,
+    mode: "unprotected",
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+export function isUnprotectedHourSecurity(config) {
+  return config?.mode === "unprotected";
+}
+
 async function deriveWrappingKey(secret, salt, iterations) {
   const material = await cryptoApi().subtle.importKey(
     "raw",

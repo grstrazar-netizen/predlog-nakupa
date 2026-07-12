@@ -331,6 +331,23 @@ function hourSecurityCard(security, { icon, escapeHtml }) {
           <p class="hour-security-note">PIN si zapomni. Če ga pozabiš, lahko zaščito ponastaviš, vendar se izbrišejo samo shranjene postavke in bonusi Poročil ur.</p>
           <button class="button button-solid button-full" type="submit">Nastavi PIN in odkleni</button>
         </form>
+        <button class="button button-ghost hour-security-forgot" type="button" data-hour-security-action="disable-pin-confirm">Nadaljuj brez PIN-a</button>
+      </section>
+    `;
+  }
+
+  if (security.screen === "disable-pin-confirm") {
+    return `
+      <section class="hour-security-card" aria-labelledby="hour-security-title">
+        <span class="hour-security-icon">${icon("shield-alert")}</span>
+        <p class="hour-security-eyebrow">Dostop brez zaščite</p>
+        <h1 id="hour-security-title">Nadaljujem brez PIN-a?</h1>
+        <p class="hour-security-copy">Poročila ur bodo dostopna vsakomur, ki odpre to aplikacijo v tem brskalniku.</p>
+        <p class="hour-security-note">To ne vpliva na Predloge nakupa, Izdajnice materiala ali Podpisne liste. PIN lahko pozneje znova vključiš.</p>
+        <div class="hour-security-actions">
+          <button class="button button-outline" type="button" data-hour-security-action="setup">Nazaj</button>
+          <button class="button button-solid" type="button" data-hour-security-action="disable-pin">Nadaljuj brez PIN-a</button>
+        </div>
       </section>
     `;
   }
@@ -400,7 +417,23 @@ function hourSecurityCard(security, { icon, escapeHtml }) {
   `;
 }
 
-function hourSecurityPanel({ icon }) {
+function hourSecurityPanel(security, { icon }) {
+  if (security.unprotected) {
+    return `
+      <section class="panel">
+        <div class="panel-header">
+          <span class="panel-icon">${icon("shield-off")}</span>
+          <span class="panel-title">Dostop</span>
+        </div>
+        <div class="panel-body">
+          <p class="panel-note">PIN ni vključen. Poročila ur so dostopna v tem brskalniku.</p>
+          <button class="button button-outline button-full" type="button" data-hour-security-action="enable-pin">
+            ${icon("shield-check")} Vključi PIN
+          </button>
+        </div>
+      </section>
+    `;
+  }
   return `
     <section class="panel">
       <div class="panel-header">
@@ -524,7 +557,7 @@ export function renderHourReportsWorkspace(context) {
   } = context;
   const helpers = { icon, escapeHtml, formatCurrency, renderSignatureZone };
 
-  if (context.security.status !== "unlocked") {
+  if (context.security.status !== "unlocked" && context.security.status !== "unprotected") {
     return renderHourSecurityWorkspace(context);
   }
 
@@ -574,7 +607,7 @@ export function renderHourReportsWorkspace(context) {
           ${selectedReport && renderSignaturePanel ? renderSignaturePanel() : ""}
           ${selectedReport ? profilePanel(selectedReport, helpers) : ""}
           ${batch ? exportPanel(batch, selectedReport, helpers) : ""}
-          ${hourSecurityPanel(helpers)}
+          ${hourSecurityPanel(context.security, helpers)}
         </aside>
       </section>
 
