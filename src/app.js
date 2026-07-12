@@ -29,10 +29,12 @@ import {
   getAllHourProfiles,
   getAllMaterialIssues,
   getAsset,
+  getDatabaseBackupSnapshot,
   deleteProposalBundle,
   getAllProposals,
   getAttachment,
   saveAsset,
+  replaceDatabaseFromBackup,
   saveAttendanceSheet as persistAttendanceSheet,
   saveAttendanceSheets as persistAttendanceSheets,
   saveHourSecurityBundle,
@@ -41,6 +43,33 @@ import {
   saveProposal,
   saveProposalBundle
 } from "./db.js";
+import {
+  BACKUP_CONFIG_ASSET_ID,
+  backupFileName,
+  backupIsDue,
+  createBackupEncryption,
+  createEncryptedBackup,
+  decryptBackupFile,
+  directoryPermission,
+  localDateKey,
+  millisecondsUntilBackup,
+  supportsDirectoryBackup,
+  validateBackupPassword,
+  writeBackupFile
+} from "./backup.js";
+import {
+  APP_VERSION,
+  APP_VERSION_STORAGE_KEY,
+  CURRENT_RELEASE,
+  UPDATE_CHECK_INTERVAL_MS,
+  fetchLatestVersion,
+  isNewerVersion
+} from "./app-version.js";
+import {
+  renderDataSafetyModal,
+  renderReleaseNotesModal,
+  renderUpdateBanner
+} from "./data-safety-ui.js";
 import { createCombinedPdfBlob } from "./pdf.js";
 import { createMaterialIssuePdfBlob } from "./material-issue-pdf.js";
 import { createAttendanceSheetPdfBlob } from "./attendance-sheet-pdf.js";
@@ -190,7 +219,20 @@ const state = {
     fields: {},
     firstInvalidField: ""
   },
-  toast: ""
+  toast: "",
+  dataSafety: {
+    open: false,
+    screen: "overview",
+    config: null,
+    pendingRestoreFile: null,
+    permissionNeeded: false,
+    error: ""
+  },
+  update: {
+    available: null,
+    dismissed: false,
+    releaseNotesOpen: false
+  }
 };
 
 let outsideClickBound = false;
@@ -207,6 +249,8 @@ let beforeUnloadBound = false;
 let pendingAttendanceFile = null;
 let pendingHourReportFile = null;
 let hourSecurityCooldownTimer = 0;
+let automaticBackupTimer = 0;
+let updateCheckTimer = 0;
 const ONBOARDING_STORAGE_KEY = "predlog-nakupa:onboarding-complete:v1";
 const DOCUMENT_POPOVER_HOVER_DELAY_MS = 1000;
 const RECENT_DELETE_DRAG_DISTANCE = 92;
@@ -1200,7 +1244,8 @@ function renderOnboardingStorageWarning() {
         <ul>
           <li>Za isto evidenco uporabljaj isti računalnik, isti brskalnik in isti uporabniški profil.</li>
           <li>Ne briši podatkov strani, zgodovine brskanja, predpomnilnika ali podatkov spletnega mesta za to aplikacijo, ker se lahko izbrišejo tudi shranjeni predlogi in ponudbe.</li>
-          <li>To ni skupna baza in nima samodejne varnostne kopije. Za uradni arhiv vedno prenesi dokument PDF in ga shrani na dogovorjeno mesto.</li>
+          <li>To ni skupna baza. Po uvodu odpri <strong>Backup</strong>, izberi mapo in nastavi dnevno šifrirano varnostno kopijo.</li>
+          <li>Za uradni arhiv še vedno prenesi končni dokument PDF in ga shrani na dogovorjeno mesto.</li>
           <li>Če računalnik uporablja več oseb, upoštevaj, da so lokalno shranjeni dokumenti vidni v istem brskalniškem profilu.</li>
         </ul>
         <div class="onboarding-storage-actions">
@@ -1663,6 +1708,255 @@ function renderToast() {
   document.body.append(toast);
 }
 
+function renderGlobalOverlays() {
+  document.querySelector("[data-global-overlays]")?.remove();
+  const container = document.createElement("div");
+  container.dataset.globalOverlays = "";
+  container.innerHTML = `
+    ${renderUpdateBanner(state.update, { icon, escapeHtml })}
+    ${renderDataSafetyModal(state.dataSafety, { icon, escapeHtml })}
+    ${renderReleaseNotesModal(state.update, { icon, escapeHtml })}
+    <input class="hidden-input" type="file" data-backup-restore-input accept=".backup,application/x-center-rog-backup,application/json" />
+  `;
+  document.body.append(container);
+  bindGlobalOverlayEvents(container);
+}
+
+function bindGlobalOverlayEvents(container) {
+  container.querySelector("[data-backup-setup-form]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void configureBackup();
+  });
+  container.querySelector("[data-backup-restore-form]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void restoreBackup();
+  });
+  container.querySelector("[data-backup-restore-input]")?.addEventListener("change", (event) => {
+    const [file] = event.currentTarget.files || [];
+    event.currentTarget.value = "";
+    if (!file) return;
+    state.dataSafety.pendingRestoreFile = file;
+    state.dataSafety.screen = "restore";
+    state.dataSafety.error = "";
+    render();
+  });
+  container.querySelectorAll("[data-modal-window]").forEach((modal) => {
+    modal.addEventListener("click", (event) => event.stopPropagation());
+  });
+}
+
+async function currentBackupBlob(config = state.dataSafety.config) {
+  const stores = await getDatabaseBackupSnapshot({
+    excludeAssetIds: [BACKUP_CONFIG_ASSET_ID]
+  });
+  return createEncryptedBackup(stores, config);
+}
+
+async function performBackup({ automatic = false } = {}) {
+  const config = state.dataSafety.config;
+  if (!config?.encryptionKey) {
+    if (!automatic) {
+      state.dataSafety.open = true;
+      state.dataSafety.screen = "setup";
+      render();
+    }
+    return false;
+  }
+
+  let permission = "unsupported";
+  if (config.directoryHandle) {
+    permission = await directoryPermission(config.directoryHandle, { request: !automatic });
+  }
+  if (automatic && config.directoryHandle && permission !== "granted") {
+    state.dataSafety.permissionNeeded = true;
+    showToast("Samodejni backup potrebuje dovoljenje za izbrano mapo.");
+    return false;
+  }
+
+  const now = new Date();
+  const blob = await currentBackupBlob(config);
+  const fileName = backupFileName(now);
+  if (config.directoryHandle && permission === "granted") {
+    await writeBackupFile(config.directoryHandle, fileName, blob);
+  } else if (!automatic) {
+    downloadBlob(blob, fileName);
+  } else {
+    return false;
+  }
+
+  const updatedConfig = {
+    ...config,
+    lastBackupDate: localDateKey(now),
+    lastBackupAt: now.toISOString(),
+    updatedAt: now.toISOString()
+  };
+  await saveAsset(updatedConfig);
+  state.dataSafety.config = updatedConfig;
+  state.dataSafety.permissionNeeded = false;
+  if (!automatic) showToast("Varnostna kopija je pripravljena.");
+  scheduleAutomaticBackup();
+  if (state.dataSafety.open) render();
+  return true;
+}
+
+async function configureBackup() {
+  const password = document.querySelector("[data-backup-password]")?.value || "";
+  const confirmation = document.querySelector("[data-backup-password-confirm]")?.value || "";
+  if (!validateBackupPassword(password)) {
+    state.dataSafety.error = "Geslo naj vsebuje vsaj 8 znakov.";
+    render();
+    return;
+  }
+  if (password !== confirmation) {
+    state.dataSafety.error = "Vneseni gesli se ne ujemata.";
+    render();
+    return;
+  }
+
+  try {
+    let directoryHandle = null;
+    if (supportsDirectoryBackup()) {
+      directoryHandle = await window.showDirectoryPicker({
+        id: "center-rog-evidence-backups",
+        mode: "readwrite",
+        startIn: "documents"
+      });
+    }
+    const encryption = await createBackupEncryption(password);
+    const now = new Date().toISOString();
+    const config = {
+      id: BACKUP_CONFIG_ASSET_ID,
+      type: "center-rog-backup-config",
+      version: 1,
+      ...encryption,
+      directoryHandle,
+      scheduledTime: "19:30",
+      lastBackupDate: "",
+      lastBackupAt: "",
+      createdAt: state.dataSafety.config?.createdAt || now,
+      updatedAt: now
+    };
+    await saveAsset(config);
+    state.dataSafety.config = config;
+    state.dataSafety.screen = "overview";
+    state.dataSafety.error = "";
+    await performBackup();
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    console.error(error);
+    state.dataSafety.error = error.message || "Backupa ni bilo mogoče nastaviti.";
+    render();
+  }
+}
+
+async function restoreBackup() {
+  const file = state.dataSafety.pendingRestoreFile;
+  const password = document.querySelector("[data-backup-restore-password]")?.value || "";
+  if (!file) {
+    state.dataSafety.error = "Najprej izberi datoteko varnostne kopije.";
+    render();
+    return;
+  }
+  try {
+    const payload = await decryptBackupFile(file, password);
+    await replaceDatabaseFromBackup(payload.stores, {
+      preserveAssetIds: [BACKUP_CONFIG_ASSET_ID]
+    });
+    state.dataSafety.pendingRestoreFile = null;
+    window.location.reload();
+  } catch (error) {
+    console.error(error);
+    state.dataSafety.error = error.message || "Podatkov ni bilo mogoče obnoviti.";
+    render();
+  }
+}
+
+function scheduleAutomaticBackup() {
+  window.clearTimeout(automaticBackupTimer);
+  const config = state.dataSafety.config;
+  if (!config?.directoryHandle) return;
+  if (backupIsDue(config)) {
+    void performBackup({ automatic: true });
+  }
+  automaticBackupTimer = window.setTimeout(() => {
+    void performBackup({ automatic: true });
+  }, millisecondsUntilBackup());
+}
+
+function maybeOpenReleaseNotes() {
+  if (state.onboarding.active) return;
+  let seenVersion = "";
+  try {
+    seenVersion = window.localStorage.getItem(APP_VERSION_STORAGE_KEY) || "";
+  } catch {
+    // Release notes can still be opened manually through a later update.
+  }
+  if (seenVersion !== APP_VERSION) state.update.releaseNotesOpen = true;
+}
+
+async function checkForAppUpdate() {
+  try {
+    const latest = await fetchLatestVersion();
+    if (isNewerVersion(latest.version)) {
+      state.update.available = latest;
+      state.update.dismissed = false;
+      render();
+    }
+  } catch (error) {
+    console.warn("Version check failed", error);
+  }
+}
+
+function scheduleUpdateChecks() {
+  window.clearInterval(updateCheckTimer);
+  updateCheckTimer = window.setInterval(checkForAppUpdate, UPDATE_CHECK_INTERVAL_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void checkForAppUpdate();
+  });
+}
+
+async function installAppUpdate() {
+  state.busy = true;
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration?.();
+    await registration?.update?.();
+    let waitingWorker = registration?.waiting || null;
+    if (!waitingWorker && registration?.installing) {
+      waitingWorker = await new Promise((resolve) => {
+        const worker = registration.installing;
+        const timeout = window.setTimeout(() => resolve(null), 5_000);
+        worker.addEventListener("statechange", () => {
+          if (worker.state !== "installed") return;
+          window.clearTimeout(timeout);
+          resolve(worker);
+        });
+      });
+    }
+    waitingWorker?.postMessage?.({ type: "SKIP_WAITING" });
+    if (waitingWorker) {
+      await Promise.race([
+        new Promise((resolve) => navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true })),
+        new Promise((resolve) => window.setTimeout(resolve, 2_000))
+      ]);
+    }
+    window.location.reload();
+  } catch (error) {
+    console.error(error);
+    state.busy = false;
+    showToast("Posodobitve ni bilo mogoče namestiti. Poskusi osvežiti stran.");
+  }
+}
+
+function closeReleaseNotes() {
+  try {
+    window.localStorage.setItem(APP_VERSION_STORAGE_KEY, APP_VERSION);
+  } catch {
+    // The modal may reappear when local storage is unavailable.
+  }
+  state.update.releaseNotesOpen = false;
+  render();
+}
+
 function normalizePanelId(value) {
   return String(value || "panel")
     .toLowerCase()
@@ -1867,6 +2161,15 @@ function renderEvidenceTabs(activeType, disabledAttr = "") {
             : ""
         }
       </div>
+      <button
+        class="data-safety-trigger"
+        type="button"
+        data-action="open-data-safety"
+        aria-label="Odpri varnostne kopije"
+        title="Varnostne kopije"
+      >
+        ${icon("shield-check")}<span>Backup</span>
+      </button>
     </nav>
   `;
 }
@@ -2271,6 +2574,7 @@ function renderMaterialIssue() {
     </main>
   `;
 
+  renderGlobalOverlays();
   bindMaterialIssueEvents();
   refreshIcons();
   renderToast();
@@ -2906,6 +3210,7 @@ function renderAttendanceSheet() {
     </main>
   `;
 
+  renderGlobalOverlays();
   bindAttendanceEvents();
   refreshIcons();
   renderToast();
@@ -2994,6 +3299,7 @@ function renderHourReports() {
     escapeHtml,
     formatCurrency
   });
+  renderGlobalOverlays();
   bindHourReportEvents();
   scheduleHourSecurityCooldownRender();
   refreshIcons();
@@ -3225,6 +3531,7 @@ function render() {
     </main>
   `;
 
+  renderGlobalOverlays();
   enhanceCollapsiblePanels();
   bindEvents();
   refreshIcons();
@@ -4689,6 +4996,14 @@ function handleOnboardingAction(action) {
 
 function handleKeyboardShortcut(event) {
   if (event.defaultPrevented || event.repeat || event.isComposing) return;
+  if (event.key === "Escape" && state.dataSafety.open) {
+    event.preventDefault();
+    state.dataSafety.open = false;
+    state.dataSafety.pendingRestoreFile = null;
+    state.dataSafety.error = "";
+    render();
+    return;
+  }
   if (
     event.key === "Escape" &&
     state.documentType === "hourReports" &&
@@ -4805,6 +5120,7 @@ function finishOnboarding() {
     labName: "",
     labCodePreview: DEFAULTS.labCode
   };
+  maybeOpenReleaseNotes();
   render();
 }
 
@@ -5460,7 +5776,37 @@ async function handleAction(action, event) {
       return;
     }
 
-    if (action === "toggle-panel") {
+    if (action === "open-data-safety") {
+      state.dataSafety.open = true;
+      state.dataSafety.screen = "overview";
+      state.dataSafety.error = "";
+      render();
+    } else if (action === "close-data-safety") {
+      state.dataSafety.open = false;
+      state.dataSafety.pendingRestoreFile = null;
+      state.dataSafety.error = "";
+      render();
+    } else if (action === "show-backup-setup") {
+      state.dataSafety.screen = "setup";
+      state.dataSafety.error = "";
+      render();
+    } else if (action === "show-backup-overview") {
+      state.dataSafety.screen = "overview";
+      state.dataSafety.pendingRestoreFile = null;
+      state.dataSafety.error = "";
+      render();
+    } else if (action === "create-backup-now") {
+      await performBackup();
+    } else if (action === "choose-backup-restore") {
+      document.querySelector("[data-backup-restore-input]")?.click();
+    } else if (action === "dismiss-update") {
+      state.update.dismissed = true;
+      render();
+    } else if (action === "install-update") {
+      await installAppUpdate();
+    } else if (action === "close-release-notes") {
+      closeReleaseNotes();
+    } else if (action === "toggle-panel") {
       event?.preventDefault();
       event?.stopPropagation();
       toggleSidebarPanel(event?.currentTarget?.dataset.panelToggleId);
@@ -6612,7 +6958,8 @@ async function init() {
     hourProfiles,
     signatureAsset,
     attendanceCategoryAsset,
-    hourSecurityAsset
+    hourSecurityAsset,
+    backupConfig
   ] = await Promise.all([
     getAllProposals(),
     getAllMaterialIssues(),
@@ -6620,7 +6967,8 @@ async function init() {
     getAllHourProfiles(),
     getAsset(SIGNATURE_ASSET_ID),
     getAsset(ATTENDANCE_CATEGORY_ASSET_ID),
-    getAsset(HOUR_SECURITY_ASSET_ID)
+    getAsset(HOUR_SECURITY_ASSET_ID),
+    getAsset(BACKUP_CONFIG_ASSET_ID)
   ]);
   state.proposals = sortRecent(proposals);
   state.materialIssues = sortRecent(materialIssues);
@@ -6667,6 +7015,7 @@ async function init() {
     };
   }
   state.attendanceCategories = normalizeAttendanceCategories(attendanceCategoryAsset?.categories || []);
+  state.dataSafety.config = backupConfig || null;
   setSignatureAsset(signatureAsset);
   const last = state.proposals[0];
   state.current = last ? createBlankProposal(last) : createBlankProposal();
@@ -6679,10 +7028,14 @@ async function init() {
   state.persistedAttachmentId = "";
   document.title = "Center Rog evidence";
   openOnboardingIfNeeded();
+  maybeOpenReleaseNotes();
   document.addEventListener("keydown", handleKeyboardShortcut);
   document.addEventListener("pointerover", handleToolbarTooltipFirstShow);
   document.addEventListener("focusin", handleToolbarTooltipFirstShow);
   render();
+  scheduleAutomaticBackup();
+  scheduleUpdateChecks();
+  void checkForAppUpdate();
 
   if (isLocalPreview()) {
     await clearLocalPreviewServiceWorker();

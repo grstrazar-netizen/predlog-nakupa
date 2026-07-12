@@ -9,6 +9,8 @@ const STORES = {
   assets: "assets"
 };
 
+const BACKUP_STORE_NAMES = Object.values(STORES);
+
 let dbPromise;
 
 function requestToPromise(request) {
@@ -302,4 +304,54 @@ export async function deleteAsset(id) {
   const tx = db.transaction(STORES.assets, "readwrite");
   tx.objectStore(STORES.assets).delete(id);
   await transactionDone(tx);
+}
+
+export async function getDatabaseBackupSnapshot({ excludeAssetIds = [] } = {}) {
+  const db = await openDatabase();
+  const tx = db.transaction(BACKUP_STORE_NAMES, "readonly");
+  const done = transactionDone(tx);
+  const entries = await Promise.all(
+    BACKUP_STORE_NAMES.map(async (storeName) => [
+      storeName,
+      await requestToPromise(tx.objectStore(storeName).getAll())
+    ])
+  );
+  await done;
+
+  const excludedAssets = new Set(excludeAssetIds.filter(Boolean));
+  const stores = Object.fromEntries(entries);
+  stores[STORES.assets] = (stores[STORES.assets] || []).filter(
+    (asset) => !excludedAssets.has(asset?.id)
+  );
+  return stores;
+}
+
+export async function replaceDatabaseFromBackup(
+  stores,
+  { preserveAssetIds = [] } = {}
+) {
+  if (!stores || typeof stores !== "object") {
+    throw new Error("Varnostna kopija ne vsebuje veljavnih podatkov.");
+  }
+
+  const db = await openDatabase();
+  const preservedAssets = [];
+  for (const assetId of preserveAssetIds.filter(Boolean)) {
+    const asset = await requestToPromise(
+      db.transaction(STORES.assets).objectStore(STORES.assets).get(assetId)
+    );
+    if (asset) preservedAssets.push(asset);
+  }
+
+  const tx = db.transaction(BACKUP_STORE_NAMES, "readwrite");
+  const done = transactionDone(tx);
+  for (const storeName of BACKUP_STORE_NAMES) {
+    const store = tx.objectStore(storeName);
+    store.clear();
+    const records = Array.isArray(stores[storeName]) ? stores[storeName] : [];
+    records.forEach((record) => store.put(record));
+  }
+  const assetStore = tx.objectStore(STORES.assets);
+  preservedAssets.forEach((asset) => assetStore.put(asset));
+  await done;
 }

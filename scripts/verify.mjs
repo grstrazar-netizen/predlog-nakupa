@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const checkOnly = process.argv.includes("--check-only");
@@ -7,13 +7,9 @@ const syntaxFiles = [
   "server.mjs",
   "scripts/build.mjs",
   "scripts/verify.mjs",
-  "src/app.js",
-  "src/db.js",
-  "src/document-layout.js",
-  "src/material-issue.js",
-  "src/material-issue-pdf.js",
-  "src/pdf.js",
-  "src/utils.js"
+  ...readdirSync("src")
+    .filter((file) => file.endsWith(".js"))
+    .map((file) => join("src", file))
 ];
 
 function run(command, args) {
@@ -25,6 +21,18 @@ function run(command, args) {
 
 for (const file of syntaxFiles) {
   run("node", ["--check", file]);
+}
+
+const packageVersion = JSON.parse(readFileSync("package.json", "utf8")).version;
+const publicVersion = JSON.parse(readFileSync("version.json", "utf8")).version;
+const appVersionSource = readFileSync("src/app-version.js", "utf8");
+const appVersion = appVersionSource.match(/APP_VERSION\s*=\s*"([^"]+)"/)?.[1];
+
+if (!appVersion || packageVersion !== appVersion || publicVersion !== appVersion) {
+  console.error(
+    `Različice se ne ujemajo: package=${packageVersion}, app=${appVersion || "manjka"}, public=${publicVersion}.`
+  );
+  process.exit(1);
 }
 
 if (!checkOnly) {

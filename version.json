@@ -1,0 +1,11 @@
+{
+  "version": "1.0.0",
+  "releasedAt": "2026-07-11",
+  "title": "Varnejši podatki in zanesljivejše posodobitve",
+  "notes": [
+    "Dodane so šifrirane varnostne kopije vseh evidenc, priponk in podpisov.",
+    "Chrome in Edge lahko po enkratni izbiri mape pripravita dnevni backup ob 19.30.",
+    "Aplikacija zdaj jasno opozori, ko je na voljo nova različica.",
+    "Dodani so večbrskalniški testi najpomembnejših uporabniških tokov."
+  ]
+}

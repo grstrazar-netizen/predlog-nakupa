@@ -8,3 +8,5 @@ vendor/
 npm-debug.log*
 .vercel
 .env*
+test-results/
+playwright-report/

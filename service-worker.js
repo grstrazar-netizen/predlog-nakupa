@@ -1,10 +1,13 @@
-const CACHE_NAME = "predlog-nakupa-v74";
+const CACHE_NAME = "predlog-nakupa-v75";
 const CACHE_PREFIX = "predlog-nakupa-";
 const IS_LOCAL_DEV = ["localhost", "127.0.0.1", "::1"].includes(self.location.hostname);
 const ASSETS = [
   "/",
   "/index.html",
   "/src/app.js",
+  "/src/app-version.js",
+  "/src/backup.js",
+  "/src/data-safety-ui.js",
   "/src/db.js",
   "/src/pdf.js",
   "/src/document-layout.js",
@@ -19,6 +22,7 @@ const ASSETS = [
   "/src/utils.js",
   "/src/styles.css",
   "/manifest.webmanifest",
+  "/version.json",
   "/icon.svg",
   "/assets/center-rog-logo.svg",
   "/assets/fonts/NotoSans-Regular.ttf",
@@ -94,4 +98,8 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (!CACHEABLE_ORIGINS.has(url.origin)) return;
   event.respondWith(handleFetch(event.request));
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });

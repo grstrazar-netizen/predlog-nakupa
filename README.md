@@ -61,6 +61,28 @@ vercel --prod
 
 Aplikacija je namenoma brez zalednega strežnika. Dokumenti, priponke in zgodovina porabe se shranjujejo v IndexedDB v brskalniku uporabnika. To pomeni, da objava na Vercelu ne ustvari skupne baze za vse vodje labov; vsak brskalnik ima svojo lokalno evidenco.
 
+### Varnostne kopije
+
+- Gumb **Backup** odpre nastavitev enotne šifrirane kopije vseh evidenc, priponk, podpisov in nastavitev.
+- Chrome in Edge lahko po enkratni izbiri mape vsak dan ob 19.30 zapišeta datoteko `center-rog-evidence-YYYY-MM-DD.backup`.
+- Aplikacija mora biti odprta. Če je ob 19.30 zaprta, se zamujena kopija naredi ob naslednjem odprtju, ko ima brskalnik dovoljenje za izbrano mapo.
+- Safari in Firefox ne omogočata tihega zapisovanja v poljubno lokalno mapo, zato v teh brskalnikih ostane ročni šifrirani prenos.
+- Geslo ni shranjeno. Brez njega varnostne kopije ni mogoče obnoviti.
+
+### Posodobitve
+
+Datoteka `version.json` vsebuje trenutno javno različico in opombe ob izdaji. Aplikacija jo preveri ob zagonu, ob vrnitvi v zavihek in nato vsakih 15 minut. Ob novi različici pokaže obvestilo za osvežitev, po prvi uporabi nove različice pa modal **Kaj je novega**.
+
+Različice v `package.json`, `version.json` in `src/app-version.js` morajo biti enake; `npm run check` to preveri.
+
+## Brskalniški testi
+
+```bash
+npm run test:e2e
+```
+
+Playwright preveri glavne tokove v Chromiumu, Firefoxu in WebKitu: zaščito neshranjenih sprememb, shranjevanje in ponovno odpiranje, priponko v PDF-ju, tisk, uvoz CSV/XLSX, PIN ter varnostne kopije. GitHub Actions jih samodejno požene ob vsakem pushu na `main` in pri pull requestih.
+
 ## Opomba o tehnologiji
 
 Projekt je samostojna progresivna spletna aplikacija brez klasičnega gradnika za uporabniški vmesnik. Skripte `npm` služijo za preverjanje, pripravo mape `dist/` in lokalni predogled. Vmesnik uporablja oblikovno logiko shadcn/Tailwind prek lokalnih žetonov CSS. Knjižnici `pdf-lib` in `lucide` se nalagata prek fiksno verzioniranih povezav CDN, servisni delavec pa ju po prvem obisku shrani v predpomnilnik.
