@@ -39,7 +39,11 @@ const REQUIRED_CSV_HEADERS = Object.freeze([
   "surname",
   "email"
 ]);
-const OPTIONAL_CSV_HEADERS = Object.freeze(["allow_photos", "no. children"]);
+const OPTIONAL_CSV_HEADERS = Object.freeze([
+  "allow_photos",
+  "no. children",
+  "no. extra people"
+]);
 
 function localTimeValue(date = new Date()) {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
@@ -63,8 +67,12 @@ function requiredText(value) {
 export function normalizePhotoConsent(value) {
   if (value === true || value === false) return value;
   const normalized = normalizedSearch(value);
-  if (["true", "yes", "da", "1"].includes(normalized)) return true;
-  if (["false", "no", "ne", "0"].includes(normalized)) return false;
+  const words = normalized.match(/[\p{L}\p{N}]+/gu) || [];
+  if (["true", "yes", "da", "1"].includes(normalized) || words.includes("da")) return true;
+  if (["false", "no", "ne", "0"].includes(normalized) || words.includes("ne")) return false;
+  if (words.includes("strinjam") || words.includes("dovoljujem") || words.includes("soglasam")) {
+    return true;
+  }
   return null;
 }
 
@@ -76,12 +84,16 @@ export function photoConsentLabel(value) {
 }
 
 export function createAttendanceParticipant(values = {}) {
+  const participantType = ["child", "extra"].includes(values.participantType)
+    ? values.participantType
+    : "primary";
   return {
     id: values.id || generateId("participant"),
     firstName: normalizedText(values.firstName),
     lastName: normalizedText(values.lastName),
     email: normalizedText(values.email).toLocaleLowerCase("sl-SI"),
     contactName: normalizedText(values.contactName),
+    participantType,
     photoConsent: normalizePhotoConsent(values.photoConsent),
     attended: Boolean(values.attended),
     duplicateEmail: Boolean(values.duplicateEmail)
@@ -219,6 +231,11 @@ function isChildRegistrationRow(row, indexes) {
   return emailCell.includes("child") || emailCell.includes("otrok");
 }
 
+function isExtraRegistrationRow(row, indexes) {
+  const emailCell = normalizedSearch(row[indexes.email]);
+  return emailCell.includes("extra person") || emailCell.includes("dodatna oseba");
+}
+
 function photoConsentFromQuestion(row = []) {
   for (const cell of row) {
     const text = normalizedText(cell);
@@ -239,8 +256,21 @@ function photoConsentFromRow(row, indexes) {
     : normalizePhotoConsent(row[indexes.allow_photos]);
 }
 
-function rowDeclaresChildren(row, indexes) {
-  return indexes["no. children"] !== undefined && Boolean(normalizedText(row[indexes["no. children"]]));
+function positiveRegistrationCount(row, indexes, field) {
+  if (indexes[field] === undefined) return false;
+  const value = normalizedText(row[indexes[field]]).replace(",", ".");
+  return Number(value) > 0;
+}
+
+function rowDeclaresDependants(row, indexes) {
+  return (
+    positiveRegistrationCount(row, indexes, "no. children") ||
+    positiveRegistrationCount(row, indexes, "no. extra people")
+  );
+}
+
+export function isRelatedAttendanceParticipant(participant) {
+  return ["child", "extra"].includes(participant?.participantType);
 }
 
 function markDuplicateEmails(participants) {
@@ -288,18 +318,24 @@ export function parseWagtailAttendanceCsv(text, fileName = "") {
     const email = normalizedText(row[indexes.email]);
     const photoConsent = photoConsentFromRow(row, indexes);
     const childRow = isChildRegistrationRow(row, indexes);
-    const registeredChildren = rowDeclaresChildren(row, indexes);
+    const extraRow = isExtraRegistrationRow(row, indexes);
+    const dependantType = childRow ? "child" : extraRow ? "extra" : "";
+    const registeredDependants = rowDeclaresDependants(row, indexes);
     const contactName = normalizedText(`${firstName} ${lastName}`);
 
-    if (childRow && currentRegistration) {
+    if (dependantType && currentRegistration) {
       if (![firstName, lastName, currentRegistration.email].some(Boolean)) return;
+      // Wagtail occasionally repeats the reservation holder as an "extra person".
+      // That row is a placeholder, not another attendee.
+      if (normalizedSearch(contactName) === normalizedSearch(currentRegistration.contactName)) return;
       group.participants.push(
         createAttendanceParticipant({
           firstName,
           lastName,
           email: currentRegistration.email,
           contactName: currentRegistration.contactName,
-          photoConsent: currentRegistration.photoConsent
+          photoConsent: currentRegistration.photoConsent,
+          participantType: dependantType
         })
       );
       return;
@@ -322,10 +358,10 @@ export function parseWagtailAttendanceCsv(text, fileName = "") {
       };
     }
 
-    if (registeredChildren || (!firstName && !lastName)) return;
+    if (registeredDependants || (!firstName && !lastName)) return;
 
     group.participants.push(
-      createAttendanceParticipant({ firstName, lastName, email, photoConsent })
+      createAttendanceParticipant({ firstName, lastName, email, photoConsent, participantType: "primary" })
     );
   });
 
@@ -390,13 +426,15 @@ export function validateAttendanceSheet(sheet) {
     const prefix = `participants.${id}`;
     if (!requiredText(participant.firstName)) fields[`${prefix}.firstName`] = "To polje je obvezno.";
     if (!requiredText(participant.lastName)) fields[`${prefix}.lastName`] = "To polje je obvezno.";
-    if (!requiredText(participant.email)) {
-      fields[`${prefix}.email`] = "To polje je obvezno.";
-    } else if (!emailPattern.test(normalizedText(participant.email))) {
-      fields[`${prefix}.email`] = "Vnesite veljaven e-poštni naslov.";
-    }
-    if (participant.photoConsent === null || participant.photoConsent === undefined) {
-      fields[`${prefix}.photoConsent`] = "Izberite kljukico ali križec.";
+    if (!isRelatedAttendanceParticipant(participant)) {
+      if (!requiredText(participant.email)) {
+        fields[`${prefix}.email`] = "To polje je obvezno.";
+      } else if (!emailPattern.test(normalizedText(participant.email))) {
+        fields[`${prefix}.email`] = "Vnesite veljaven e-poštni naslov.";
+      }
+      if (participant.photoConsent === null || participant.photoConsent === undefined) {
+        fields[`${prefix}.photoConsent`] = "Izberite kljukico ali križec.";
+      }
     }
   });
 

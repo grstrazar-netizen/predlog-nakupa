@@ -1579,6 +1579,18 @@ select.attendance-meta-input option {
   box-shadow: inset 0 0 0 1px #18181b;
 }
 
+.attendance-related-participant td {
+  background: #fafafa;
+}
+
+.attendance-participant-kind {
+  display: block;
+  margin: 2px 0 0;
+  color: #6b7280;
+  font-size: 10px;
+  line-height: 1.1;
+}
+
 .attendance-cell-input.is-invalid {
   box-shadow: inset 0 0 0 1px #dc2626;
 }

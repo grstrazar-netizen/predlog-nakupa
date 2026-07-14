@@ -106,6 +106,7 @@ import {
   ATTENDANCE_ROWS_PER_PAGE,
   DEFAULT_ATTENDANCE_CATEGORIES,
   attendanceParticipantEmailDisplay,
+  isRelatedAttendanceParticipant,
   attendanceVisibleRowCount,
   attendanceSheetFromImportGroup,
   attendanceSheetWithSaveMetadata,
@@ -2726,8 +2727,10 @@ function attendanceParticipantMarkup(participant, displayIndex) {
   const prefix = `participants.${participant.id}`;
   const emailDisplay = attendanceParticipantEmailDisplay(participant);
   const emailFieldName = participant.contactName ? "contactEmail" : "email";
+  const relatedParticipant = isRelatedAttendanceParticipant(participant);
+  const participantKind = participant.participantType === "child" ? "Otrok" : "Dodatna oseba";
   return `
-    <tr data-attendance-participant-row="${escapeHtml(participant.id)}">
+    <tr data-attendance-participant-row="${escapeHtml(participant.id)}" class="${relatedParticipant ? "attendance-related-participant" : ""}">
       <td class="attendance-index-cell">${displayIndex}</td>
       <td>
         <input
@@ -2738,6 +2741,7 @@ function attendanceParticipantMarkup(participant, displayIndex) {
           aria-label="Ime udeleženca ${displayIndex}"
           ${attendanceValidationAttrs(`${prefix}.firstName`)}
         />
+        ${relatedParticipant ? `<span class="attendance-participant-kind">${participantKind}</span>` : ""}
         ${renderAttendanceError(`${prefix}.firstName`)}
       </td>
       <td>
@@ -2759,7 +2763,7 @@ function attendanceParticipantMarkup(participant, displayIndex) {
           value="${escapeHtml(emailDisplay)}"
           inputmode="email"
           aria-label="E-pošta oziroma kontakt starša za udeleženca ${displayIndex}"
-          ${attendanceValidationAttrs(`${prefix}.email`)}
+          ${relatedParticipant ? 'title="Kontakt prijavitelja"' : attendanceValidationAttrs(`${prefix}.email`)}
         />
         ${participant.duplicateEmail ? `<span class="attendance-duplicate-hint">${icon("copy")} Podvojen naslov</span>` : ""}
         ${renderAttendanceError(`${prefix}.email`)}
@@ -2774,7 +2778,7 @@ function attendanceParticipantMarkup(participant, displayIndex) {
             data-attendance-participant-id="${escapeHtml(participant.id)}"
             aria-label="Soglasje za fotografiranje udeleženca ${displayIndex}"
             title="Soglasje za fotografiranje"
-            ${attendanceValidationAttrs(`${prefix}.photoConsent`)}
+            ${relatedParticipant ? 'title="Soglasje prijavitelja za fotografiranje"' : attendanceValidationAttrs(`${prefix}.photoConsent`)}
           >
             <option value="" ${participant.photoConsent === null ? "selected" : ""}>—</option>
             <option value="yes" ${participant.photoConsent === true ? "selected" : ""}>✓</option>

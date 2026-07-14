@@ -11,6 +11,7 @@ import {
   attendanceSuggestions,
   createAttendanceParticipant,
   createBlankAttendanceSheet,
+  isRelatedAttendanceParticipant,
   normalizeAttendanceCategories,
   normalizePhotoConsent,
   parseWagtailAttendanceCsv,
@@ -89,6 +90,15 @@ bor@example.com,Delavnica,09:00,2026-06-15,Bor,Kovač,False`;
   assert.equal(normalizePhotoConsent("Ne"), false);
 });
 
+test("prioritizes detailed photo consent and understands Wagtail answer variants", () => {
+  const csv = `email,event,start_time,start_day,name,surname,allow_photos,question 0
+ana@example.com,Delavnica,09:00,2026-06-15,Ana,Novak,False,"Ali dovoljujete fotografiranje? -> ['Da']"
+bor@example.com,Delavnica,09:00,2026-06-15,Bor,Kovač,False,"Dovoljenje za fotografiranje -> Seznanjen_a sem, da so dogodki foto dokumentirani, in se s tem strinjam."`;
+  const [group] = parseWagtailAttendanceCsv(csv);
+  assert.equal(group.participants[0].photoConsent, true);
+  assert.equal(group.participants[1].photoConsent, true);
+});
+
 test("parses child-program Wagtail CSV rows into child participants", () => {
   const csv = `email,event,start_time,start_day,name,surname,no. children,allow_photos,question 0,question 1
 stars1@example.com,Mali mojster: Mizarski tečaj za otroke,10:00:00,2026-07-06,Maja,Novak,1,False,Opremo v delavnicah bom uporabljal_a na lastno odgovornost. -> Da,Ali dovoljujete fotografiranje in snemanje izključno za potrebe promocije programa Centra Rog? -> Da
@@ -114,6 +124,42 @@ stars2@example.com,Mali mojster: Mizarski tečaj za otroke,10:00:00,2026-07-06,,
       ["Liam", "Žigon", "stars1@example.com", "Maja Novak", "Maja Novak - stars1@example.com", true],
       ["Dmytro", "Lysenko", "stars2@example.com", "", "stars2@example.com", false]
     ]
+  );
+});
+
+test("keeps related children and extra people without requiring their own contact data", () => {
+  const csv = `email,event,start_time,start_day,name,surname,no. children,no. extra people,allow_photos
+parent@example.com,Otroški program,10:00:00,2026-07-06,Maja,Novak,1,0,False
+↳ (child),,,,Liam,Žigon,,,,
+info@example.com,Skupnostna kuhinja,10:00:00,2026-07-07,Rezervacija,Skupine,0,1,True
+↳ (extra person),,,,Nika,Kovač,,,,`;
+  const [group] = parseWagtailAttendanceCsv(csv, "povezane-osebe.csv");
+  assert.deepEqual(
+    group.participants.map((participant) => [
+      participant.firstName,
+      participant.participantType,
+      participant.email,
+      participant.photoConsent
+    ]),
+    [
+      ["Liam", "child", "parent@example.com", false],
+      ["Nika", "extra", "info@example.com", true]
+    ]
+  );
+  assert.equal(group.participants.every(isRelatedAttendanceParticipant), true);
+  assert.equal(validateAttendanceSheet(validSheet({ participants: group.participants })).valid, true);
+});
+
+test("keeps ordinary registrations with zero dependants and ignores repeated reservation placeholders", () => {
+  const csv = `email,event,start_time,start_day,name,surname,no. children,no. extra people,allow_photos
+ana@example.com,Delavnica,10:00:00,2026-07-06,Ana,Novak,0,0,True
+info@example.com,Skupnostna kuhinja,10:00:00,2026-07-07,Rezervacija,Skupine,0,2,False
+↳ (extra person),,,,Rezervacija,Skupine,,,,
+↳ (extra person),,,,Nika,Kovač,,,,`;
+  const [group] = parseWagtailAttendanceCsv(csv);
+  assert.deepEqual(
+    group.participants.map((participant) => `${participant.firstName} ${participant.lastName}`),
+    ["Ana Novak", "Nika Kovač"]
   );
 });
 
