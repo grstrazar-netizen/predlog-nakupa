@@ -139,6 +139,14 @@ import {
   createProposalLayout,
   documentLayoutCssVariables
 } from "./document-layout.js";
+import {
+  COMPANY_DIRECTORY_CSV_FILE_NAME,
+  COMPANY_DIRECTORY_CSV_TEMPLATE,
+  companyDocumentLines,
+  companyLookupKey,
+  enrichProposalCompanyDetails,
+  parseCompanyDirectoryCsv
+} from "./company-directory.js";
 
 const root = document.getElementById("app");
 const SIGNATURE_ASSET_ID = "lab-manager-signature";
@@ -474,17 +482,64 @@ function companyDirectorySuggestions(currentValue = "") {
   ).slice(0, 6);
 }
 
+function companyDirectoryMatch(name = "") {
+  const normalizedName = companyLookupKey(name);
+  if (!normalizedName) return null;
+  return state.companies.find(
+    (company) => companyLookupKey(company.name) === normalizedName
+  ) || null;
+}
+
+function applyCompanyDirectoryMatch(name = "") {
+  const company = companyDirectoryMatch(name);
+  state.current = company
+    ? enrichProposalCompanyDetails({ ...state.current, company: company.name }, [company])
+    : { ...state.current, companyAddress: "", companyTaxNumber: "" };
+  return company;
+}
+
+function syncCompanyDocumentDetails(input) {
+  const wrapper = input?.closest(".smart-field");
+  const details = wrapper?.querySelector("[data-company-details]");
+  if (!details) return;
+
+  const lines = companyDocumentLines(state.current).slice(1);
+  details.textContent = lines.length ? `, ${lines.join(", ")}` : "";
+  details.hidden = lines.length === 0;
+  wrapper.classList.toggle("company-inline-field", lines.length > 0);
+  wrapper.style.setProperty("--company-name-width", `${Math.min(Math.max(String(state.current.company || "").length + 1, 8), 34)}ch`);
+}
+
 function renderCompanyDirectoryPanel() {
   const editing = editingCompany();
   const hasCompanies = state.companies.length > 0;
   return `
-    <section class="panel company-directory-panel">
+    <section class="panel company-directory-panel" data-panel-id="proposal-podjetja">
       <div class="panel-header">
         <span class="panel-icon">${icon("building-2")}</span>
         <span class="panel-title">Podjetja</span>
       </div>
       <div class="panel-body">
-        <p class="company-directory-intro">Shrani podatke partnerjev za hitrejši in pravilnejši vnos v dokumente.</p>
+        <div class="company-directory-import">
+          <div class="company-directory-import-actions">
+            <button
+              class="button button-outline company-import-button"
+              type="button"
+              data-action="download-company-template"
+              data-tooltip="Prenesi predlogo, izpolni podatke in jo shrani kot CSV UTF-8."
+            >
+              ${icon("download")} Prenesi predlogo
+            </button>
+            <button
+              class="button button-outline company-import-button"
+              type="button"
+              data-action="import-companies"
+              data-tooltip="Uvozi izpolnjeno predlogo CSV. Ime podjetja in naslov sta obvezna."
+            >
+              ${icon("file-up")} Uvozi CSV
+            </button>
+          </div>
+        </div>
         <form class="company-directory-form" data-company-directory-form>
           <label>
             <span>Ime podjetja <b aria-hidden="true">*</b></span>
@@ -575,6 +630,7 @@ function renderProposalInput({
 }
 
 function renderProposalPaper(proposal = state.current, { preview = false, modal = false } = {}) {
+  proposal = enrichProposalCompanyDetails(proposal, state.companies);
   const validation = preview ? emptyValidationState() : state.validation || emptyValidationState();
   const idPrefix = preview ? "preview-" : modal ? "modal-" : "";
   const fullNameId = `${idPrefix}fullName`;
@@ -588,6 +644,8 @@ function renderProposalPaper(proposal = state.current, { preview = false, modal 
   const textareaAttrs = preview
     ? "readonly tabindex=\"-1\""
     : `data-field="explanation" data-smart-field="explanation" ${validationControlAttrs("explanation")}`;
+  const companyDetailLines = companyDocumentLines(proposal).slice(1);
+  const companyNameWidth = Math.min(Math.max(String(proposal.company || "").length + 1, 8), 34);
 
   return `
     <article class="paper${preview ? " proposal-preview-document-paper" : ""}" aria-label="Predlog nakupa drobnega materiala">
@@ -656,9 +714,9 @@ function renderProposalPaper(proposal = state.current, { preview = false, modal 
         </span>
       </div>
 
-      <div class="doc-line">
+      <div class="doc-line company-doc-line">
         <label for="${escapeHtml(companyId)}">Podjetje:</label>
-        <span class="smart-field">
+        <span class="smart-field${companyDetailLines.length ? " company-inline-field" : ""}" style="--company-name-width: ${companyNameWidth}ch">
           ${renderProposalInput({
             proposal,
             field: "company",
@@ -668,6 +726,9 @@ function renderProposalPaper(proposal = state.current, { preview = false, modal 
             smartField: true,
             preview
           })}
+          <span class="company-document-details" data-company-details${companyDetailLines.length ? "" : " hidden"} aria-live="polite">
+            ${companyDetailLines.length ? `, ${escapeHtml(companyDetailLines.join(", "))}` : ""}
+          </span>
           ${fieldError("company")}
         </span>
       </div>
@@ -2082,7 +2143,7 @@ function normalizePanelId(value) {
 }
 
 function sidebarPanelDefaultCollapsed(title) {
-  return ["Moj podpis", "Urejanje dokumenta"].includes(String(title || "").trim());
+  return ["Podjetja", "Moj podpis", "Urejanje dokumenta"].includes(String(title || "").trim());
 }
 
 function sidebarPanelCollapsed(panelId, title) {
@@ -3615,6 +3676,7 @@ function render() {
 
       <input class="hidden-input" type="file" id="offerInput" accept="application/pdf,image/*" />
       <input class="hidden-input" type="file" id="signatureInput" accept="image/png,image/jpeg,.png,.jpg,.jpeg" />
+      <input class="hidden-input" type="file" id="companyCsvInput" accept=".csv,text/csv,text/plain" />
 
       ${
         state.historyModalOpen
@@ -3684,6 +3746,11 @@ function bindEvents() {
         state.current.estimatedValueCents = parseMoneyToCents(event.currentTarget.value);
       } else {
         state.current[name] = event.currentTarget.value;
+      }
+
+      if (name === "company") {
+        applyCompanyDirectoryMatch(event.currentTarget.value);
+        syncCompanyDocumentDetails(event.currentTarget);
       }
 
       if (name === "explanation") {
@@ -3812,6 +3879,11 @@ function bindEvents() {
 
   document.getElementById("offerInput")?.addEventListener("change", handleOfferSelected);
   document.getElementById("signatureInput")?.addEventListener("change", handleSignatureSelected);
+  document.getElementById("companyCsvInput")?.addEventListener("change", async (event) => {
+    const [file] = event.currentTarget.files || [];
+    event.currentTarget.value = "";
+    if (file) await importCompanyDirectoryFile(file);
+  });
   bindSignatureEvents();
   bindOfferDropzone();
   bindEvidenceNavigationEvents();
@@ -5485,6 +5557,10 @@ function showSuggestions(input) {
     button.addEventListener("click", () => {
       input.value = suggestion;
       state.current[field] = suggestion;
+      if (field === "company") {
+        applyCompanyDirectoryMatch(suggestion);
+        syncCompanyDocumentDetails(input);
+      }
       markDirty();
       popover.remove();
       input.focus();
@@ -5993,6 +6069,14 @@ async function handleAction(action, event) {
       event?.preventDefault();
       event?.stopPropagation();
       toggleSidebarPanel(event?.currentTarget?.dataset.panelToggleId);
+    } else if (action === "download-company-template") {
+      downloadBlob(
+        new Blob([COMPANY_DIRECTORY_CSV_TEMPLATE], { type: "text/csv;charset=utf-8" }),
+        COMPANY_DIRECTORY_CSV_FILE_NAME
+      );
+      showToast("Predloga CSV je pripravljena za izpolnjevanje.");
+    } else if (action === "import-companies") {
+      document.getElementById("companyCsvInput")?.click();
     } else if (action === "new") {
       if (state.documentType === "materialIssue") {
         await newMaterialIssue();
@@ -6213,6 +6297,77 @@ async function saveCompanyDirectoryEntry(form) {
   showToast(existing ? "Podatki podjetja so posodobljeni." : "Podjetje je dodano v imenik.");
 }
 
+async function importCompanyDirectoryFile(file) {
+  if (!String(file?.name || "").toLocaleLowerCase("sl-SI").endsWith(".csv")) {
+    state.companyDirectory.error = "Izberi datoteko CSV.";
+    render();
+    return;
+  }
+
+  try {
+    const { companies: imported, skippedRows } = parseCompanyDirectoryCsv(await file.text());
+    const now = new Date().toISOString();
+    const companies = [...state.companies];
+    let added = 0;
+    let updated = 0;
+    let unchanged = 0;
+
+    imported.forEach((company) => {
+      const existingIndex = companies.findIndex(
+        (item) => item.name.toLocaleLowerCase("sl-SI") === company.name.toLocaleLowerCase("sl-SI")
+      );
+      if (existingIndex < 0) {
+        companies.push({
+          id: generateId(),
+          ...company,
+          createdAt: now,
+          updatedAt: now
+        });
+        added += 1;
+        return;
+      }
+
+      const existing = companies[existingIndex];
+      const next = {
+        ...existing,
+        address: company.address,
+        taxNumber: company.taxNumber || existing.taxNumber,
+        updatedAt: now
+      };
+      if (next.address === existing.address && next.taxNumber === existing.taxNumber) {
+        unchanged += 1;
+      } else {
+        companies[existingIndex] = next;
+        updated += 1;
+      }
+    });
+
+    const normalized = normalizeCompanyDirectory(companies);
+    await saveAsset({
+      id: COMPANY_DIRECTORY_ASSET_ID,
+      type: "company-directory",
+      version: 1,
+      companies: normalized,
+      updatedAt: now
+    });
+    state.companies = normalized;
+    state.companyDirectory = { editingId: "", error: "" };
+    render();
+
+    const skipped = skippedRows.length;
+    const details = [
+      added ? `${added} dodanih` : "",
+      updated ? `${updated} posodobljenih` : "",
+      unchanged ? `${unchanged} nespremenjenih` : "",
+      skipped ? `${skipped} preskočenih` : ""
+    ].filter(Boolean);
+    showToast(`Uvoz podjetij je končan: ${details.join(", ")}.`);
+  } catch (error) {
+    state.companyDirectory.error = error.message || "CSV-ja ni bilo mogoče uvoziti.";
+    render();
+  }
+}
+
 async function deleteCompanyDirectoryEntry(companyId) {
   const company = state.companies.find((item) => item.id === companyId);
   if (!company) return;
@@ -6370,8 +6525,9 @@ async function getProposalAttachmentForPdf(proposal) {
 }
 
 async function createProposalExportBlob(proposal) {
-  const attachment = await getProposalAttachmentForPdf(proposal);
-  return createCombinedPdfBlob(proposal, attachment, state.signatureAsset);
+  const enrichedProposal = enrichProposalCompanyDetails(proposal, state.companies);
+  const attachment = await getProposalAttachmentForPdf(enrichedProposal);
+  return createCombinedPdfBlob(enrichedProposal, attachment, state.signatureAsset);
 }
 
 async function downloadProposalPreviewPdf() {
@@ -7049,6 +7205,7 @@ async function newDocument({ skipUnsavedGuard = false } = {}) {
 }
 
 async function saveCurrentDocument({ silent = false } = {}) {
+  state.current = enrichProposalCompanyDetails(state.current, state.companies);
   const validation = await validateCurrentDocument();
   if (!validation.valid) {
     setValidation(validation);

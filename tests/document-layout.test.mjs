@@ -29,6 +29,23 @@ test("accepts proposal content that fits the shared A4 layout", () => {
   assert.deepEqual(layout.overflowFields, []);
 });
 
+test("keeps all company data on one PDF line and scales it to fit", () => {
+  const layout = createProposalLayout(
+    validProposal({
+      company: "Altos d.o.o.",
+      companyAddress: "Ižanska cesta 13, Ljubljana",
+      companyTaxNumber: "SI36432234"
+    }),
+    measureText
+  );
+
+  assert.deepEqual(layout.lines.company, [
+    "Altos d.o.o., Ižanska cesta 13, Ljubljana, Davčna št.: SI36432234"
+  ]);
+  assert.equal(layout.fits, true);
+  assert.ok(layout.text.companyFontSizePt <= layout.fonts.bodyPt);
+});
+
 test("reports fields that would overflow the one-page A4 document", () => {
   const layout = createProposalLayout(
     validProposal({

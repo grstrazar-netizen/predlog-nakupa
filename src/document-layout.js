@@ -1,3 +1,5 @@
+import { companyDocumentText } from "./company-directory.js";
+
 const PREVIEW_TO_POINTS = 595.28 / 794;
 
 function pt(previewPixels) {
@@ -139,12 +141,18 @@ export function createProposalLayout(proposal, measureText) {
   const jobWidth = content.widthPt - measureText("Zaposlen/a na delovnem mestu:", body) - labelGap;
   const companyWidth = content.widthPt - measureText("Podjetje:", body) - labelGap;
 
+  const companyText = companyDocumentText(proposal);
+  const companyMeasuredWidth = companyText ? measureText(companyText, body) : 0;
+  const companyFontSizePt = companyMeasuredWidth > companyWidth
+    ? Math.max(fonts.bodyPt * 0.72, fonts.bodyPt * (companyWidth / companyMeasuredWidth))
+    : fonts.bodyPt;
+
   const lineSets = {
     fullName: wrapTextLines(proposal.fullName, nameWidth, (text) => measureText(text, semibold)),
     jobTitle: wrapTextLines(proposal.jobTitle, jobWidth, (text) => measureText(text, semibold)),
     purpose: wrapTextLines(proposal.purpose, content.widthPt, (text) => measureText(text, semibold)),
     explanation: wrapTextLines(proposal.explanation, explanationWidth, (text) => measureText(text, body)),
-    company: wrapTextLines(proposal.company, companyWidth, (text) => measureText(text, body))
+    company: companyText ? [companyText] : []
   };
 
   const overflowFields = Object.entries(lineSets)
@@ -160,6 +168,7 @@ export function createProposalLayout(proposal, measureText) {
       nameValueLeftPt: content.leftPt + measureText("Ime in priimek:", body) + labelGap,
       jobValueLeftPt: content.leftPt + measureText("Zaposlen/a na delovnem mestu:", body) + labelGap,
       companyValueLeftPt: content.leftPt + measureText("Podjetje:", body) + labelGap,
+      companyFontSizePt,
       explanationTextLeftPt: content.leftPt + pt(14),
       explanationTextTopPt: positions.explanationBoxTopPt + pt(12)
     })

@@ -306,7 +306,7 @@ async function drawProposalPage(pdf, proposal, signatureAsset) {
     layout.lines.company,
     layout.text.companyValueLeftPt,
     positions.companyTopPt,
-    { ...body, lineHeight: fontSizes.lineHeightPt }
+    { ...body, size: layout.text.companyFontSizePt, lineHeight: fontSizes.lineHeightPt }
   );
 
   const valueLabel = "V okvirni skupni vrednosti: cca";
