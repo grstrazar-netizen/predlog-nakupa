@@ -135,6 +135,33 @@ export function backupFileName(date = new Date()) {
   return `center-rog-evidence-${localDateKey(date)}.backup`;
 }
 
+export function transferBackupFileName(date = new Date()) {
+  return `center-rog-predaja-${localDateKey(date)}.backup`;
+}
+
+export function summarizeBackupStores(stores = {}) {
+  const count = (storeName) =>
+    Array.isArray(stores?.[storeName]) ? stores[storeName].length : 0;
+  const proposals = count("proposals");
+  const materialIssues = count("materialIssues");
+  const attendanceSheets = count("attendanceSheets");
+  const hourProfiles = count("hourProfiles");
+  const attachments = count("attachments");
+  const settings = count("assets");
+
+  return {
+    proposals,
+    materialIssues,
+    attendanceSheets,
+    hourProfiles,
+    attachments,
+    settings,
+    documents: proposals + materialIssues + attendanceSheets + hourProfiles,
+    totalRecords:
+      proposals + materialIssues + attendanceSheets + hourProfiles + attachments + settings
+  };
+}
+
 export function backupIsDue(config, now = new Date()) {
   if (!config?.encryptionKey) return false;
   if (config.lastBackupDate === localDateKey(now)) return false;

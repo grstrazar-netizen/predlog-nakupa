@@ -1,15 +1,28 @@
 {
-  "name": "Dokumenti materiala",
-  "short_name": "Material",
-  "description": "Lokalna progresivna spletna aplikacija za predloge nakupa in izdajnice materiala.",
+  "name": "Center Rog evidence",
+  "short_name": "Rog evidence",
+  "description": "Lokalna aplikacija za predloge nakupa, izdajnice materiala, podpisne liste in poročila ur.",
   "id": "/",
   "lang": "sl",
   "scope": "/",
   "start_url": "/",
   "display": "standalone",
+  "prefer_related_applications": false,
   "background_color": "#f4f4f5",
   "theme_color": "#f4f4f5",
   "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
     {
       "src": "/icon.svg",
       "sizes": "any",

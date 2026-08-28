@@ -16,16 +16,41 @@ let dbPromise;
 function requestToPromise(request) {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () =>
+      reject(request.error || new Error("Lokalnega shranjevanja podatkov ni bilo mogoče dokončati."));
   });
 }
 
 function transactionDone(transaction) {
   return new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-    transaction.onabort = () => reject(transaction.error);
+    const rejectTransaction = () =>
+      reject(
+        transaction.error ||
+          new Error("Lokalnega shranjevanja podatkov ni bilo mogoče dokončati.")
+      );
+    transaction.onerror = rejectTransaction;
+    transaction.onabort = rejectTransaction;
   });
+}
+
+async function binaryRecordForStorage(record) {
+  if (!record?.blob || !(record.blob instanceof Blob)) return record;
+  return {
+    ...record,
+    blob: await record.blob.arrayBuffer()
+  };
+}
+
+function binaryRecordForUse(record) {
+  if (!record?.blob || record.blob instanceof Blob) return record;
+  if (record.blob instanceof ArrayBuffer || ArrayBuffer.isView(record.blob)) {
+    return {
+      ...record,
+      blob: new Blob([record.blob], { type: record.mimeType || "application/octet-stream" })
+    };
+  }
+  return record;
 }
 
 export function openDatabase() {
@@ -193,6 +218,8 @@ export async function saveProposalBundle(proposal, { attachment = null, deleteAt
     throw new Error("Priponka ni pravilno povezana z dokumentom.");
   }
 
+  const storedAttachment = await binaryRecordForStorage(attachment);
+
   const db = await openDatabase();
   const tx = db.transaction([STORES.proposals, STORES.attachments], "readwrite");
   const done = transactionDone(tx);
@@ -200,7 +227,7 @@ export async function saveProposalBundle(proposal, { attachment = null, deleteAt
   const attachmentStore = tx.objectStore(STORES.attachments);
 
   proposalStore.put(proposal);
-  if (attachment) attachmentStore.put(attachment);
+  if (storedAttachment) attachmentStore.put(storedAttachment);
 
   [...new Set(deleteAttachmentIds.filter(Boolean))]
     .filter((id) => id !== attachment?.id)
@@ -231,9 +258,10 @@ export async function deleteProposalBundle(proposal) {
 }
 
 export async function saveAttachment(attachment) {
+  const storedAttachment = await binaryRecordForStorage(attachment);
   const db = await openDatabase();
   const tx = db.transaction(STORES.attachments, "readwrite");
-  tx.objectStore(STORES.attachments).put(attachment);
+  tx.objectStore(STORES.attachments).put(storedAttachment);
   await transactionDone(tx);
   return attachment;
 }
@@ -241,7 +269,9 @@ export async function saveAttachment(attachment) {
 export async function getAttachment(id) {
   if (!id) return null;
   const db = await openDatabase();
-  return requestToPromise(db.transaction(STORES.attachments).objectStore(STORES.attachments).get(id));
+  return binaryRecordForUse(
+    await requestToPromise(db.transaction(STORES.attachments).objectStore(STORES.attachments).get(id))
+  );
 }
 
 export async function deleteAttachment(id) {
@@ -287,13 +317,16 @@ export async function deleteOrphanAttachments() {
 
 export async function getAsset(id) {
   const db = await openDatabase();
-  return requestToPromise(db.transaction(STORES.assets).objectStore(STORES.assets).get(id));
+  return binaryRecordForUse(
+    await requestToPromise(db.transaction(STORES.assets).objectStore(STORES.assets).get(id))
+  );
 }
 
 export async function saveAsset(asset) {
+  const storedAsset = await binaryRecordForStorage(asset);
   const db = await openDatabase();
   const tx = db.transaction(STORES.assets, "readwrite");
-  tx.objectStore(STORES.assets).put(asset);
+  tx.objectStore(STORES.assets).put(storedAsset);
   await transactionDone(tx);
   return asset;
 }
@@ -334,6 +367,12 @@ export async function replaceDatabaseFromBackup(
     throw new Error("Varnostna kopija ne vsebuje veljavnih podatkov.");
   }
 
+  const restoredStores = { ...stores };
+  for (const storeName of [STORES.attachments, STORES.assets]) {
+    const records = Array.isArray(stores[storeName]) ? stores[storeName] : [];
+    restoredStores[storeName] = await Promise.all(records.map(binaryRecordForStorage));
+  }
+
   const db = await openDatabase();
   const preservedAssets = [];
   for (const assetId of preserveAssetIds.filter(Boolean)) {
@@ -348,7 +387,7 @@ export async function replaceDatabaseFromBackup(
   for (const storeName of BACKUP_STORE_NAMES) {
     const store = tx.objectStore(storeName);
     store.clear();
-    const records = Array.isArray(stores[storeName]) ? stores[storeName] : [];
+    const records = Array.isArray(restoredStores[storeName]) ? restoredStores[storeName] : [];
     records.forEach((record) => store.put(record));
   }
   const assetStore = tx.objectStore(STORES.assets);

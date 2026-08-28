@@ -53,7 +53,9 @@ import {
   directoryPermission,
   localDateKey,
   millisecondsUntilBackup,
+  summarizeBackupStores,
   supportsDirectoryBackup,
+  transferBackupFileName,
   validateBackupPassword,
   writeBackupFile
 } from "./backup.js";
@@ -242,8 +244,15 @@ const state = {
     screen: "overview",
     config: null,
     pendingRestoreFile: null,
+    summary: null,
+    transferCreatedAt: "",
+    hasUnsavedChanges: false,
     permissionNeeded: false,
     error: ""
+  },
+  install: {
+    available: false,
+    installed: false
   },
   update: {
     available: null,
@@ -268,7 +277,10 @@ let pendingHourReportFile = null;
 let hourSecurityCooldownTimer = 0;
 let automaticBackupTimer = 0;
 let updateCheckTimer = 0;
+let deferredInstallPrompt = null;
+let installEventsBound = false;
 const ONBOARDING_STORAGE_KEY = "predlog-nakupa:onboarding-complete:v1";
+const TRANSFER_RESTORE_STORAGE_KEY = "center-rog-evidence:last-transfer-restore";
 const DOCUMENT_POPOVER_HOVER_DELAY_MS = 1000;
 const RECENT_DELETE_DRAG_DISTANCE = 92;
 const EXPLANATION_EMPTY_EXAMPLE_LINES = [
@@ -1370,7 +1382,9 @@ function renderOnboardingWelcome() {
           </div>
 
           <div class="onboarding-actions">
-            <button class="button button-outline" type="button" data-onboarding-action="skip">Preskoči</button>
+            <button class="button button-outline" type="button" data-onboarding-action="restore-existing">Obnovi obstoječe podatke</button>
+            <span class="onboarding-action-spacer"></span>
+            <button class="button button-ghost" type="button" data-onboarding-action="skip">Preskoči</button>
             <button class="button button-solid" type="submit">Začni</button>
           </div>
         </form>
@@ -1890,7 +1904,7 @@ function renderGlobalOverlays() {
   container.dataset.globalOverlays = "";
   container.innerHTML = `
     ${renderUpdateBanner(state.update, { icon, escapeHtml })}
-    ${renderDataSafetyModal(state.dataSafety, { icon, escapeHtml })}
+    ${renderDataSafetyModal(state.dataSafety, { icon, escapeHtml, install: state.install })}
     ${renderReleaseNotesModal(state.update, { icon, escapeHtml })}
     <input class="hidden-input" type="file" data-backup-restore-input accept=".backup,application/x-center-rog-backup,application/json" />
   `;
@@ -1906,6 +1920,10 @@ function bindGlobalOverlayEvents(container) {
   container.querySelector("[data-backup-restore-form]")?.addEventListener("submit", (event) => {
     event.preventDefault();
     void restoreBackup();
+  });
+  container.querySelector("[data-transfer-export-form]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void createTransferPackage();
   });
   container.querySelector("[data-backup-restore-input]")?.addEventListener("change", (event) => {
     const [file] = event.currentTarget.files || [];
@@ -1926,6 +1944,72 @@ async function currentBackupBlob(config = state.dataSafety.config) {
     excludeAssetIds: [BACKUP_CONFIG_ASSET_ID]
   });
   return createEncryptedBackup(stores, config);
+}
+
+async function backupSnapshotAndSummary() {
+  const stores = await getDatabaseBackupSnapshot({
+    excludeAssetIds: [BACKUP_CONFIG_ASSET_ID]
+  });
+  return { stores, summary: summarizeBackupStores(stores) };
+}
+
+async function showDataTransfer() {
+  state.dataSafety.open = true;
+  state.dataSafety.screen = "transfer";
+  state.dataSafety.summary = null;
+  state.dataSafety.hasUnsavedChanges = state.dirty;
+  state.dataSafety.error = "";
+  render();
+  try {
+    const { summary } = await backupSnapshotAndSummary();
+    state.dataSafety.summary = summary;
+    if (state.dataSafety.open && state.dataSafety.screen === "transfer") render();
+  } catch (error) {
+    console.error(error);
+    state.dataSafety.error = "Povzetka shranjenih podatkov ni bilo mogoče pripraviti.";
+    render();
+  }
+}
+
+async function createTransferPackage() {
+  if (state.dirty) {
+    state.dataSafety.hasUnsavedChanges = true;
+    state.dataSafety.error = "Najprej shrani ali zavrzi trenutne spremembe.";
+    render();
+    return;
+  }
+
+  const password = document.querySelector("[data-transfer-password]")?.value || "";
+  const confirmation = document.querySelector("[data-transfer-password-confirm]")?.value || "";
+  if (!validateBackupPassword(password)) {
+    state.dataSafety.error = "Geslo predajnega paketa naj vsebuje vsaj 8 znakov.";
+    render();
+    return;
+  }
+  if (password !== confirmation) {
+    state.dataSafety.error = "Vneseni gesli se ne ujemata.";
+    render();
+    return;
+  }
+
+  setBusy(true);
+  try {
+    const { stores, summary } = await backupSnapshotAndSummary();
+    const encryption = await createBackupEncryption(password);
+    const blob = await createEncryptedBackup(stores, encryption);
+    downloadBlob(blob, transferBackupFileName());
+    state.dataSafety.summary = summary;
+    state.dataSafety.transferCreatedAt = new Date().toISOString();
+    state.dataSafety.error = "";
+    render();
+    showToast("Predajni paket je pripravljen za prenos.");
+  } catch (error) {
+    console.error(error);
+    state.dataSafety.error = error.message || "Predajnega paketa ni bilo mogoče pripraviti.";
+    render();
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function performBackup({ automatic = false } = {}) {
@@ -2035,9 +2119,19 @@ async function restoreBackup() {
   }
   try {
     const payload = await decryptBackupFile(file, password);
+    const summary = summarizeBackupStores(payload.stores);
     await replaceDatabaseFromBackup(payload.stores, {
       preserveAssetIds: [BACKUP_CONFIG_ASSET_ID]
     });
+    try {
+      window.localStorage.setItem(ONBOARDING_STORAGE_KEY, "done");
+      window.localStorage.setItem(
+        TRANSFER_RESTORE_STORAGE_KEY,
+        JSON.stringify({ restoredAt: new Date().toISOString(), summary })
+      );
+    } catch {
+      // Obnovljeni podatki ostanejo veljavni tudi brez lokalnega obvestila po ponovnem zagonu.
+    }
     state.dataSafety.pendingRestoreFile = null;
     window.location.reload();
   } catch (error) {
@@ -2057,6 +2151,65 @@ function scheduleAutomaticBackup() {
   automaticBackupTimer = window.setTimeout(() => {
     void performBackup({ automatic: true });
   }, millisecondsUntilBackup());
+}
+
+function appIsInstalled() {
+  return Boolean(
+    window.matchMedia?.("(display-mode: standalone)")?.matches ||
+      window.navigator.standalone === true
+  );
+}
+
+function bindInstallEvents() {
+  if (installEventsBound) return;
+  installEventsBound = true;
+  state.install.installed = appIsInstalled();
+
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    state.install.available = true;
+    if (root.childElementCount) render();
+  });
+
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    state.install.available = false;
+    state.install.installed = true;
+    render();
+    showToast("Aplikacija je nameščena na tem računalniku.");
+  });
+}
+
+async function installApplication() {
+  if (state.install.installed || appIsInstalled()) {
+    state.install.installed = true;
+    state.dataSafety.open = true;
+    state.dataSafety.screen = "install";
+    state.dataSafety.error = "";
+    render();
+    return;
+  }
+
+  if (!deferredInstallPrompt) {
+    state.dataSafety.open = true;
+    state.dataSafety.screen = "install";
+    state.dataSafety.error = "";
+    render();
+    return;
+  }
+
+  await deferredInstallPrompt.prompt();
+  const choice = await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  state.install.available = false;
+  if (choice?.outcome === "accepted") {
+    showToast("Namestitev aplikacije se zaključuje.");
+  } else {
+    state.dataSafety.open = true;
+    state.dataSafety.screen = "install";
+  }
+  render();
 }
 
 function maybeOpenReleaseNotes() {
@@ -2337,15 +2490,30 @@ function renderEvidenceTabs(activeType, disabledAttr = "") {
             : ""
         }
       </div>
-      <button
-        class="data-safety-trigger"
-        type="button"
-        data-action="open-data-safety"
-        aria-label="Odpri varnostne kopije"
-        title="Varnostne kopije"
-      >
-        ${icon("shield-check")}<span>Backup</span>
-      </button>
+      <div class="evidence-utility-actions">
+        ${
+          state.install.installed
+            ? ""
+            : `<button
+                class="data-safety-trigger app-install-trigger"
+                type="button"
+                data-action="install-app"
+                aria-label="Namesti aplikacijo"
+                title="Namesti aplikacijo na računalnik"
+              >
+                ${icon("monitor-down")}<span>Namesti</span>
+              </button>`
+        }
+        <button
+          class="data-safety-trigger"
+          type="button"
+          data-action="open-data-safety"
+          aria-label="Odpri varnostne kopije"
+          title="Varnostne kopije in prenos podatkov"
+        >
+          ${icon("shield-check")}<span>Backup</span>
+        </button>
+      </div>
     </nav>
   `;
 }
@@ -5209,6 +5377,12 @@ function bindOnboardingEvents() {
 function handleOnboardingAction(action) {
   stopOnboardingCalculatorDemo({ restore: true });
 
+  if (action === "restore-existing") {
+    state.onboarding.active = false;
+    void showDataTransfer();
+    return;
+  }
+
   if (action === "confirm-storage") {
     showInstallShortcutStep();
     return;
@@ -6040,6 +6214,10 @@ async function handleAction(action, event) {
       state.dataSafety.screen = "overview";
       state.dataSafety.error = "";
       render();
+    } else if (action === "show-data-transfer") {
+      await showDataTransfer();
+    } else if (action === "install-app") {
+      await installApplication();
     } else if (action === "close-data-safety") {
       state.dataSafety.open = false;
       state.dataSafety.pendingRestoreFile = null;
@@ -6240,7 +6418,7 @@ async function handleAction(action, event) {
     }
   } catch (error) {
     console.error(error);
-    showToast(error.message || "Prišlo je do napake.");
+    showToast(error?.message || "Prišlo je do napake.");
   }
 }
 
@@ -7289,6 +7467,9 @@ async function attachOfferFile(file) {
     throw new Error("Pripni datoteko PDF ali slikovno datoteko.");
   }
 
+  const mimeType = file.type || (offerKind === "pdf" ? "application/pdf" : "image/unknown");
+  const blob = new Blob([await file.arrayBuffer()], { type: mimeType });
+
   if (!state.current.id) {
     state.current.id = generateId("proposal");
   }
@@ -7297,9 +7478,9 @@ async function attachOfferFile(file) {
     id: generateId("offer"),
     documentId: state.current.id,
     fileName: file.name,
-    mimeType: file.type || (offerKind === "pdf" ? "application/pdf" : "image/unknown"),
-    size: file.size,
-    blob: file,
+    mimeType,
+    size: blob.size,
+    blob,
     createdAt: new Date().toISOString()
   };
   state.current.offerAttachmentId = attachment.id;
@@ -7371,7 +7552,25 @@ async function clearLocalPreviewServiceWorker() {
   }
 }
 
+function consumeTransferRestoreNotice() {
+  try {
+    const raw = window.localStorage.getItem(TRANSFER_RESTORE_STORAGE_KEY);
+    if (!raw) return "";
+    window.localStorage.removeItem(TRANSFER_RESTORE_STORAGE_KEY);
+    const summary = JSON.parse(raw)?.summary;
+    if (!summary) return "Podatki so uspešno obnovljeni.";
+    const documentCount = Number(summary.documents || 0);
+    const attachmentCount = Number(summary.attachments || 0);
+    const documents = documentCount === 1 ? "1 dokument" : `${documentCount} dokumentov`;
+    const attachments = attachmentCount === 1 ? "1 priponka" : `${attachmentCount} priponk`;
+    return `Prenos je končan: ${documents} in ${attachments}.`;
+  } catch {
+    return "Podatki so uspešno obnovljeni.";
+  }
+}
+
 async function init() {
+  bindInstallEvents();
   await deleteOrphanAttachments();
   const [
     proposals,
@@ -7471,6 +7670,8 @@ async function init() {
   document.addEventListener("pointerover", handleToolbarTooltipFirstShow);
   document.addEventListener("focusin", handleToolbarTooltipFirstShow);
   render();
+  const transferNotice = consumeTransferRestoreNotice();
+  if (transferNotice) showToast(transferNotice);
   scheduleAutomaticBackup();
   scheduleUpdateChecks();
   void checkForAppUpdate();

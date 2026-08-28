@@ -9,7 +9,7 @@ export default defineConfig({
   expect: { timeout: 8_000 },
   reporter: process.env.CI ? [["line"], ["html", { open: "never" }]] : "line",
   use: {
-    baseURL: "http://app.local",
+    baseURL: "https://app.local",
     serviceWorkers: "block",
     trace: "retain-on-failure",
     screenshot: "only-on-failure"

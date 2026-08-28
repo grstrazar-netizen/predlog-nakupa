@@ -2,7 +2,15 @@ import { cp, mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 const outputDir = "dist";
-const files = ["index.html", "manifest.webmanifest", "service-worker.js", "icon.svg", "version.json"];
+const files = [
+  "index.html",
+  "manifest.webmanifest",
+  "service-worker.js",
+  "icon.svg",
+  "icon-192.png",
+  "icon-512.png",
+  "version.json"
+];
 const directories = ["assets", "src"];
 
 async function assertExists(path) {

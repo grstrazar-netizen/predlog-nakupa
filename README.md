@@ -69,6 +69,16 @@ Aplikacija je namenoma brez zalednega strežnika. Dokumenti, priponke in zgodovi
 - Safari in Firefox ne omogočata tihega zapisovanja v poljubno lokalno mapo, zato v teh brskalnikih ostane ročni šifrirani prenos.
 - Geslo ni shranjeno. Brez njega varnostne kopije ni mogoče obnoviti.
 
+### Predaja drugemu uporabniku ali novemu računalniku
+
+- Gumb **Namesti** v glavi zažene sistemsko namestitev PWA v Chromu ali Edgeu oziroma pokaže kratka navodila za druge brskalnike.
+- V meniju **Backup** možnost **Prenos na nov računalnik** pripravi ločen šifriran paket `center-rog-predaja-YYYY-MM-DD.backup`.
+- Paket vsebuje vse shranjene predloge nakupa, izdajnice, podpisne liste, poročila ur, priponke, podpise, imenik podjetij in nastavitve. Neshranjene spremembe niso vključene, zato aplikacija izdelavo paketa v takem stanju blokira.
+- Na novem računalniku uporabnik namesti isto aplikacijo, izbere paket in vnese geslo. Po obnovitvi aplikacija izpiše število prenesenih dokumentov in priponk.
+- Podatkov na starem računalniku ne briši, dokler nova odgovorna oseba ne preveri prenesene zgodovine.
+
+Operativni kontrolni seznam je v [PREDAJA.md](./PREDAJA.md).
+
 ### Posodobitve
 
 Datoteka `version.json` vsebuje trenutno javno različico in opombe ob izdaji. Aplikacija jo preveri ob zagonu, ob vrnitvi v zavihek in nato vsakih 15 minut. Ob novi različici pokaže obvestilo za osvežitev, po prvi uporabi nove različice pa modal **Kaj je novega**.

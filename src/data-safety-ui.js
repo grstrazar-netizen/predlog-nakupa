@@ -9,10 +9,34 @@ function formatBackupTime(value) {
   }).format(new Date(value));
 }
 
+function transferSummary(summary, { icon }) {
+  if (!summary) {
+    return `<div class="transfer-summary-loading">${icon("loader-circle")} Preverjam shranjene podatke ...</div>`;
+  }
+  return `
+    <dl class="transfer-summary" aria-label="Vsebina predajnega paketa">
+      <div><dt>${summary.proposals}</dt><dd>predlogov nakupa</dd></div>
+      <div><dt>${summary.materialIssues}</dt><dd>izdajnic</dd></div>
+      <div><dt>${summary.attendanceSheets}</dt><dd>podpisnih listov</dd></div>
+      <div><dt>${summary.hourProfiles}</dt><dd>poročil ur</dd></div>
+      <div><dt>${summary.attachments}</dt><dd>priponk</dd></div>
+      <div><dt>${summary.settings}</dt><dd>nastavitev in sredstev</dd></div>
+    </dl>
+  `;
+}
+
 function backupOverview(dataSafety, { icon, escapeHtml }) {
   const config = dataSafety.config;
   const automatic = Boolean(config?.directoryHandle);
   return `
+    <section class="transfer-callout">
+      <span class="transfer-callout-icon">${icon("laptop-minimal-check")}</span>
+      <div>
+        <strong>Prenos na nov računalnik</strong>
+        <p>Pripravi en šifriran paket z vso zgodovino, priponkami, podpisi, podjetji in nastavitvami.</p>
+      </div>
+      <button class="button button-solid" type="button" data-action="show-data-transfer">Začni prenos</button>
+    </section>
     <div class="data-safety-summary">
       <span class="data-safety-status ${config ? "is-ready" : "is-unconfigured"}">
         ${icon(config ? "shield-check" : "shield-alert")}
@@ -46,6 +70,106 @@ function backupOverview(dataSafety, { icon, escapeHtml }) {
       Samodejni zapis deluje v Chromu in Edgeu, ko je aplikacija odprta. Če je ob 19.30 zaprta, se backup izvede ob naslednjem primernem odprtju aplikacije.
     </p>
     <p class="data-safety-version">Različica aplikacije ${APP_VERSION}</p>
+  `;
+}
+
+function dataTransfer(dataSafety, helpers) {
+  const { icon } = helpers;
+  const installLabel = helpers.install?.available ? "Namesti aplikacijo" : "Pokaži navodila";
+  return `
+    <div class="transfer-layout">
+      <section class="transfer-step">
+        <span class="transfer-step-number">1</span>
+        <div class="transfer-step-heading">
+          <span class="transfer-step-icon">${icon("package-check")}</span>
+          <div>
+            <strong>Na starem računalniku</strong>
+            <p>Prenesi šifriran predajni paket in geslo sporoči novi odgovorni osebi po ločeni poti.</p>
+          </div>
+        </div>
+        ${transferSummary(dataSafety.summary, helpers)}
+        ${
+          dataSafety.hasUnsavedChanges
+            ? `<div class="data-safety-warning">${icon("triangle-alert")} Pred izdelavo paketa shrani ali zavrzi trenutne neshranjene spremembe.</div>`
+            : ""
+        }
+        <form class="data-safety-form transfer-export-form" data-transfer-export-form>
+          <div class="transfer-password-grid">
+            <label>
+              <span>Novo geslo predajnega paketa</span>
+              <input type="password" data-transfer-password minlength="8" autocomplete="new-password" required />
+            </label>
+            <label>
+              <span>Ponovi geslo</span>
+              <input type="password" data-transfer-password-confirm minlength="8" autocomplete="new-password" required />
+            </label>
+          </div>
+          <button class="button button-solid transfer-primary-action" type="submit" data-busy-sensitive ${dataSafety.hasUnsavedChanges ? "disabled" : ""}>
+            ${icon("download")} Prenesi predajni paket
+          </button>
+        </form>
+        ${
+          dataSafety.transferCreatedAt
+            ? `<div class="transfer-success" role="status">${icon("check-circle-2")} Paket je pripravljen. Ne izbriši podatkov s starega računalnika, dokler prenosa ne preveriš na novem.</div>`
+            : ""
+        }
+      </section>
+
+      <section class="transfer-step">
+        <span class="transfer-step-number">2</span>
+        <div class="transfer-step-heading">
+          <span class="transfer-step-icon">${icon("monitor-down")}</span>
+          <div>
+            <strong>Na novem računalniku</strong>
+            <p>Odpri aplikacijo, jo namesti in nato izberi prejeti paket. Po obnovitvi bo zgodovina takoj na voljo.</p>
+          </div>
+        </div>
+        <ol class="transfer-instructions">
+          <li>Odpri <strong>predlog-nakupa.vercel.app</strong> v Chromu ali Edgeu.</li>
+          <li>Namesti aplikacijo, da bo dostopna kot običajen program.</li>
+          <li>Izberi predajni paket in vnesi geslo.</li>
+          <li>Primerjaj število dokumentov s povzetkom na starem računalniku.</li>
+        </ol>
+        <div class="data-safety-actions transfer-receive-actions">
+          <button class="button button-outline" type="button" data-action="install-app">${icon("monitor-down")} ${installLabel}</button>
+          <button class="button button-solid" type="button" data-action="choose-backup-restore">${icon("folder-up")} Izberi predajni paket</button>
+        </div>
+      </section>
+    </div>
+    <div class="data-safety-actions transfer-footer-actions">
+      <button class="button button-outline" type="button" data-action="show-backup-overview">Nazaj na backup</button>
+    </div>
+  `;
+}
+
+function installInstructions(install, { icon }) {
+  return `
+    <div class="install-guide">
+      <div class="data-safety-explainer">
+        ${icon(install?.installed ? "badge-check" : "monitor-down")}
+        <div>
+          <strong>${install?.installed ? "Aplikacija je že nameščena" : "Namesti Center Rog evidence"}</strong>
+          <p>Namestitev ustvari samostojno okno in bližnjico. Podatki ostanejo v istem brskalniškem profilu.</p>
+        </div>
+      </div>
+      ${
+        install?.installed
+          ? `<div class="transfer-success">${icon("check-circle-2")} Aplikacijo lahko odpreš iz menija Start, Applications ali opravilne vrstice.</div>`
+          : `<ol class="transfer-instructions install-instructions">
+              <li><strong>Chrome ali Edge:</strong> v naslovni vrstici klikni ikono za namestitev. Če je ni, odpri meni brskalnika in izberi <strong>Namesti stran kot aplikacijo</strong>.</li>
+              <li><strong>Safari na Macu:</strong> v meniju <strong>File</strong> izberi <strong>Add to Dock</strong>.</li>
+              <li><strong>Firefox:</strong> namestitev kot samostojna namizna aplikacija ni podprta; ustvari zaznamek in uporabljaj spletno različico.</li>
+            </ol>`
+      }
+      <div class="data-safety-actions">
+        <button class="button button-outline" type="button" data-action="show-data-transfer">Nazaj na prenos</button>
+        ${
+          install?.available && !install?.installed
+            ? `<button class="button button-solid" type="button" data-action="install-app">${icon("download")} Namesti zdaj</button>`
+            : ""
+        }
+      </div>
+    </div>
   `;
 }
 
@@ -114,14 +238,24 @@ export function renderDataSafetyModal(dataSafety, helpers) {
       ? backupSetup(dataSafety, helpers)
       : dataSafety.screen === "restore"
         ? backupRestore(dataSafety, helpers)
-        : backupOverview(dataSafety, helpers);
+        : dataSafety.screen === "transfer"
+          ? dataTransfer(dataSafety, helpers)
+          : dataSafety.screen === "install"
+            ? installInstructions(helpers.install, helpers)
+            : backupOverview(dataSafety, helpers);
+  const title =
+    dataSafety.screen === "transfer"
+      ? "Prenos na nov računalnik"
+      : dataSafety.screen === "install"
+        ? "Namestitev aplikacije"
+        : "Varnostne kopije";
   return `
     <div class="modal-backdrop data-safety-backdrop" data-action="close-data-safety" role="presentation">
-      <section class="modal-window data-safety-modal" role="dialog" aria-modal="true" aria-labelledby="data-safety-title" data-modal-window>
+      <section class="modal-window data-safety-modal${dataSafety.screen === "transfer" ? " data-safety-modal-transfer" : ""}" role="dialog" aria-modal="true" aria-labelledby="data-safety-title" data-modal-window>
         <header class="modal-header">
           <div>
             <span class="modal-eyebrow">Podatki in varnost</span>
-            <h2 class="modal-title" id="data-safety-title">Varnostne kopije</h2>
+            <h2 class="modal-title" id="data-safety-title">${title}</h2>
           </div>
           <button class="button button-icon-only button-ghost" type="button" data-action="close-data-safety" aria-label="Zapri">${helpers.icon("x")}</button>
         </header>

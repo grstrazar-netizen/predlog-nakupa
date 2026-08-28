@@ -8,6 +8,8 @@ import {
   createEncryptedBackup,
   decryptBackupFile,
   millisecondsUntilBackup,
+  summarizeBackupStores,
+  transferBackupFileName,
   validateBackupPassword
 } from "../src/backup.js";
 
@@ -62,4 +64,32 @@ test("schedules one daily backup after 19.30", () => {
   );
   assert.equal(backupFileName(after), "center-rog-evidence-2026-07-11.backup");
   assert.ok(millisecondsUntilBackup(before) > 0);
+});
+
+test("names a transfer package separately from daily backups", () => {
+  const date = new Date(2026, 7, 28, 10, 0, 0);
+  assert.equal(transferBackupFileName(date), "center-rog-predaja-2026-08-28.backup");
+});
+
+test("summarizes every transferable store", () => {
+  assert.deepEqual(
+    summarizeBackupStores({
+      proposals: [{}, {}],
+      materialIssues: [{}],
+      attendanceSheets: [{}, {}, {}],
+      hourProfiles: [{}],
+      attachments: [{}, {}],
+      assets: [{}, {}]
+    }),
+    {
+      proposals: 2,
+      materialIssues: 1,
+      attendanceSheets: 3,
+      hourProfiles: 1,
+      attachments: 2,
+      settings: 2,
+      documents: 7,
+      totalRecords: 11
+    }
+  );
 });

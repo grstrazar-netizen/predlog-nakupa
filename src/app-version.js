@@ -1,15 +1,15 @@
-export const APP_VERSION = "1.0.2";
+export const APP_VERSION = "1.1.0";
 export const APP_VERSION_STORAGE_KEY = "center-rog-evidence:last-seen-version";
 export const UPDATE_CHECK_INTERVAL_MS = 15 * 60 * 1000;
 
 export const CURRENT_RELEASE = {
   version: APP_VERSION,
-  releasedAt: "2026-07-12",
-  title: "Prilagodljiv dostop do Poročil ur",
+  releasedAt: "2026-08-28",
+  title: "Varna predaja aplikacije in zgodovine",
   notes: [
-    "Dodana je lokalna kartica za dodajanje, popravljanje in odstranjevanje podjetij.",
-    "Poročila ur lahko zdaj uporabljaš s šestmestnim PIN-om ali brez njega.",
-    "Odstranjena je obroba pri odobritvi DA / NE."
+    "Dodana sta neposreden gumb za namestitev aplikacije in navodila za podprte brskalnike.",
+    "Voden prenos na nov računalnik izvozi celotno zgodovino v en šifriran predajni paket.",
+    "Po obnovitvi aplikacija potrdi število prenesenih dokumentov in priponk."
   ]
 };
 

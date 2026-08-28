@@ -5,6 +5,11 @@ import { fileURLToPath } from "node:url";
 
 const ONBOARDING_KEY = "predlog-nakupa:onboarding-complete:v1";
 const VERSION_KEY = "center-rog-evidence:last-seen-version";
+const APP_VERSION = "1.1.0";
+const TINY_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z6V8AAAAASUVORK5CYII=",
+  "base64"
+);
 const PROJECT_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const CONTENT_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -17,7 +22,7 @@ const CONTENT_TYPES = {
 };
 
 test.beforeEach(async ({ page }) => {
-  await page.route("http://app.local/**", async (route) => {
+  await page.route("https://app.local/**", async (route) => {
     const url = new URL(route.request().url());
     const relativePath = decodeURIComponent(url.pathname === "/" ? "index.html" : url.pathname.slice(1));
     try {
@@ -31,11 +36,17 @@ test.beforeEach(async ({ page }) => {
     }
   });
   await page.addInitScript(
-    ({ onboardingKey, versionKey }) => {
+    ({ onboardingKey, versionKey, appVersion }) => {
       localStorage.setItem(onboardingKey, "done");
-      localStorage.setItem(versionKey, "1.0.2");
+      if (localStorage.getItem(versionKey) !== "__show_release_notes__") {
+        localStorage.setItem(versionKey, appVersion);
+      }
+      Object.defineProperty(window, "showDirectoryPicker", {
+        configurable: true,
+        value: undefined
+      });
     },
-    { onboardingKey: ONBOARDING_KEY, versionKey: VERSION_KEY }
+    { onboardingKey: ONBOARDING_KEY, versionKey: VERSION_KEY, appVersion: APP_VERSION }
   );
   await page.goto("/");
   await expect(page).toHaveTitle(/Center Rog/);
@@ -45,7 +56,7 @@ test("loads all evidences and opens backup settings", async ({ page }) => {
   await expect(page.getByRole("tab")).toHaveCount(4);
   await page.getByRole("button", { name: "Odpri varnostne kopije" }).click();
   await expect(page.getByRole("heading", { name: "Varnostne kopije" })).toBeVisible();
-  await expect(page.getByText("Različica aplikacije 1.0.2")).toBeVisible();
+  await expect(page.getByText(`Različica aplikacije ${APP_VERSION}`)).toBeVisible();
 });
 
 test("creates an encrypted manual backup when folder access is unavailable", async ({ page }) => {
@@ -61,8 +72,91 @@ test("creates an encrypted manual backup when folder access is unavailable", asy
   await expect(page.getByText("Ročni šifrirani backup")).toBeVisible();
 });
 
+test("transfers saved history through an encrypted handoff package", async ({ page }) => {
+  await page.locator('[data-field="fullName"]').fill("Predajni uporabnik");
+  await page.locator('[data-field="jobTitle"]').fill("Vodja predajnega laba");
+  await page.locator('[data-field="purpose"]').fill("Predajni lab");
+  await page.locator('[data-field="explanation"]').fill("Preverjanje prenosa 42 EUR");
+  await page.locator('[data-field="company"]').fill("Prenos zgodovine d.o.o.");
+  await page.locator('[data-field="estimatedValueCents"]').fill("42,00");
+  await page.locator("#offerInput").setInputFiles({
+    name: "predajna-ponudba.png",
+    mimeType: "image/png",
+    buffer: TINY_PNG
+  });
+  await page.locator("#signatureInput").setInputFiles({
+    name: "predajni-podpis.png",
+    mimeType: "image/png",
+    buffer: await readFile(join(PROJECT_ROOT, "icon-192.png"))
+  });
+  await expect(page.locator(".toast")).toContainText("Podpis je shranjen.");
+  await page.getByRole("button", { name: "Shrani dokument" }).click();
+
+  await page.getByRole("button", { name: "Odpri varnostne kopije" }).click();
+  await page.getByRole("button", { name: "Začni prenos" }).click();
+  await expect(page.getByRole("heading", { name: "Prenos na nov računalnik" })).toBeVisible();
+  await expect(page.getByText("predlogov nakupa")).toBeVisible();
+  await page.locator("[data-transfer-password]").fill("predajno-geslo");
+  await page.locator("[data-transfer-password-confirm]").fill("predajno-geslo");
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Prenesi predajni paket" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^center-rog-predaja-\d{4}-\d{2}-\d{2}\.backup$/);
+  const transferPath = await download.path();
+  expect(transferPath).toBeTruthy();
+
+  await page.evaluate(async () => {
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open("predlog-nakupa-db", 4);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const stores = [
+      "proposals",
+      "materialIssues",
+      "attendanceSheets",
+      "hourProfiles",
+      "attachments",
+      "assets"
+    ];
+    const transaction = db.transaction(stores, "readwrite");
+    stores.forEach((storeName) => transaction.objectStore(storeName).clear());
+    await new Promise((resolve, reject) => {
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+    db.close();
+  });
+  await page.reload();
+  await expect(page.getByText("Prenos zgodovine d.o.o.")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Odpri varnostne kopije" }).click();
+  await page.locator("[data-backup-restore-input]").setInputFiles({
+    name: download.suggestedFilename(),
+    mimeType: "application/x-center-rog-backup",
+    buffer: await readFile(transferPath)
+  });
+  await expect(page.getByText(download.suggestedFilename())).toBeVisible();
+  await page.locator("[data-backup-restore-password]").fill("predajno-geslo");
+  await page.getByRole("button", { name: "Obnovi podatke" }).click();
+
+  await expect(page.locator(".toast")).toContainText("Prenos je končan: 1 dokument in 1 priponka.");
+  const restoredProposal = page.getByRole("button", { name: /Prenos zgodovine d\.o\.o\./ });
+  await expect(restoredProposal).toBeVisible();
+  await restoredProposal.click();
+  await expect(page.getByText("predajna-ponudba.png")).toBeVisible();
+  await page.getByRole("button", { name: "Zapri predogled" }).click();
+  await page.locator('[data-panel-id^="proposal-moj-podpis"] .panel-collapse-button').click();
+  await expect(page.getByRole("button", { name: "Vstavi v dokument" })).toBeVisible();
+});
+
 test("shows release notes once for a newly installed version", async ({ page }) => {
-  await page.evaluate((versionKey) => localStorage.removeItem(versionKey), VERSION_KEY);
+  await page.evaluate(
+    (versionKey) => localStorage.setItem(versionKey, "__show_release_notes__"),
+    VERSION_KEY
+  );
   await page.reload();
   await expect(page.getByRole("heading", { name: "Kaj je novega" })).toBeVisible();
   await page.getByRole("button", { name: "Razumem" }).click();
@@ -80,17 +174,12 @@ test("protects dirty proposal, saves it and exports attachment in PDF", async ({
   await page.locator('[data-field="purpose"]').fill("Testni lab");
   await page.locator('[data-field="explanation"]').fill("Testni material 25 EUR");
   await page.locator('[data-field="company"]').fill("Testno podjetje");
-  await page.locator('[data-field="estimatedValue"]').fill("25,00");
-  await page.locator('[data-field="labCode"]').fill("TST");
+  await page.locator('[data-field="estimatedValueCents"]').fill("25,00");
 
-  const png = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z6V8AAAAASUVORK5CYII=",
-    "base64"
-  );
   await page.locator("#offerInput").setInputFiles({
     name: "ponudba.png",
     mimeType: "image/png",
-    buffer: png
+    buffer: TINY_PNG
   });
   await page.getByRole("button", { name: "Shrani dokument" }).click();
   await expect(page.getByText("SHRANJENO").first()).toBeVisible();
@@ -101,7 +190,7 @@ test("protects dirty proposal, saves it and exports attachment in PDF", async ({
   expect(download.suggestedFilename()).toMatch(/\.pdf$/);
 
   await page.reload();
-  await expect(page.getByText("Testno podjetje")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Testno podjetje/ })).toBeVisible();
 });
 
 test("routes print through the active proposal PDF flow", async ({ page }) => {
@@ -110,8 +199,7 @@ test("routes print through the active proposal PDF flow", async ({ page }) => {
   await page.locator('[data-field="purpose"]').fill("Testni lab");
   await page.locator('[data-field="explanation"]').fill("Testni material 25 EUR");
   await page.locator('[data-field="company"]').fill("Testno podjetje");
-  await page.locator('[data-field="estimatedValue"]').fill("25,00");
-  await page.locator('[data-field="labCode"]').fill("TST");
+  await page.locator('[data-field="estimatedValueCents"]').fill("25,00");
   await page.getByRole("button", { name: "Shrani dokument" }).click();
 
   await page.addInitScript(() => {
@@ -150,8 +238,8 @@ test("imports a Wagtail CSV and prepares an attendance sheet", async ({ page }) 
     if (!(await input.inputValue())) await input.fill("Test");
   }
   await page.getByRole("button", { name: "Ustvari podpisne liste" }).click();
-  await expect(page.getByDisplayValue("Ana")).toBeVisible();
-  await expect(page.getByDisplayValue("Novak")).toBeVisible();
+  await expect(page.locator('input[value="Ana"]')).toBeVisible();
+  await expect(page.locator('input[value="Novak"]')).toBeVisible();
 });
 
 test("imports Connecteam XLSX after PIN setup", async ({ page }) => {
@@ -159,7 +247,8 @@ test("imports Connecteam XLSX after PIN setup", async ({ page }) => {
   await page.getByLabel("Šestmestni PIN").fill("123456");
   await page.getByLabel("Ponovi PIN").fill("123456");
   await page.getByRole("button", { name: "Nastavi PIN in odkleni" }).click();
-  await expect(page.getByText("Poročila ur", { exact: true }).first()).toBeVisible();
+  await expect(page.locator(".toast")).toContainText("Poročila ur so zaščitena in odklenjena.");
+  await expect(page.locator("#hourReportInput")).toHaveCount(1);
 
   const workbookBytes = await page.evaluate(() => {
     const rows = [
@@ -168,13 +257,16 @@ test("imports Connecteam XLSX after PIN setup", async ({ page }) => {
     ];
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), "List view");
-    return Array.from(XLSX.write(workbook, { type: "array", bookType: "xlsx" }));
+    return Array.from(
+      new Uint8Array(XLSX.write(workbook, { type: "array", bookType: "xlsx" }))
+    );
   });
   await page.locator("#hourReportInput").setInputFiles({
     name: "connecteam.xlsx",
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     buffer: Buffer.from(workbookBytes)
   });
-  await expect(page.getByText("Ana Novak")).toBeVisible();
-  await expect(page.getByText(/6 h/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Ana Novak julij 2026 · 6 h/ })
+  ).toBeVisible();
 });

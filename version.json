@@ -1,10 +1,10 @@
 {
-  "version": "1.0.2",
-  "releasedAt": "2026-07-12",
-  "title": "Prilagodljiv dostop do Poročil ur",
+  "version": "1.1.0",
+  "releasedAt": "2026-08-28",
+  "title": "Varna predaja aplikacije in zgodovine",
   "notes": [
-    "Dodana je lokalna kartica za dodajanje, popravljanje in odstranjevanje podjetij.",
-    "Poročila ur lahko zdaj uporabljaš s šestmestnim PIN-om ali brez njega.",
-    "Odstranjena je obroba pri odobritvi DA / NE."
+    "Dodana sta neposreden gumb za namestitev aplikacije in navodila za podprte brskalnike.",
+    "Voden prenos na nov računalnik izvozi celotno zgodovino v en šifriran predajni paket.",
+    "Po obnovitvi aplikacija potrdi število prenesenih dokumentov in priponk."
   ]
 }

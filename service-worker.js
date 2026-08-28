@@ -1,4 +1,4 @@
-const CACHE_NAME = "predlog-nakupa-v77";
+const CACHE_NAME = "predlog-nakupa-v79";
 const CACHE_PREFIX = "predlog-nakupa-";
 const IS_LOCAL_DEV = ["localhost", "127.0.0.1", "::1"].includes(self.location.hostname);
 const ASSETS = [
@@ -24,6 +24,8 @@ const ASSETS = [
   "/manifest.webmanifest",
   "/version.json",
   "/icon.svg",
+  "/icon-192.png",
+  "/icon-512.png",
   "/assets/center-rog-logo.svg",
   "/assets/fonts/NotoSans-Regular.ttf",
   "/assets/fonts/NotoSans-SemiBold.ttf",
