@@ -149,6 +149,10 @@ import {
   enrichProposalCompanyDetails,
   parseCompanyDirectoryCsv
 } from "./company-directory.js";
+import {
+  createProposalRegisterWorkbook,
+  proposalRegisterFileName
+} from "./proposal-register.js";
 
 const root = document.getElementById("app");
 const SIGNATURE_ASSET_ID = "lab-manager-signature";
@@ -3768,6 +3772,17 @@ function render() {
                   </span>
                 </span>
               </div>
+              <button
+                class="button button-outline proposal-register-export"
+                type="button"
+                data-action="export-proposal-register"
+                data-busy-sensitive
+                aria-label="Izvozi vse predloge v Excel"
+                data-tooltip="Prenesi računovodski register vseh shranjenih predlogov in njihovih statusov."
+                ${state.proposals.length ? disabledAttr : "disabled"}
+              >
+                ${icon("download")} Izvozi vse v Excel
+              </button>
               <div class="separator"></div>
               <div class="history-head">
                 <span class="hint-label">Zadnji dokumenti</span>
@@ -6255,6 +6270,8 @@ async function handleAction(action, event) {
       showToast("Predloga CSV je pripravljena za izpolnjevanje.");
     } else if (action === "import-companies") {
       document.getElementById("companyCsvInput")?.click();
+    } else if (action === "export-proposal-register") {
+      exportProposalRegister();
     } else if (action === "new") {
       if (state.documentType === "materialIssue") {
         await newMaterialIssue();
@@ -6419,6 +6436,37 @@ async function handleAction(action, event) {
   } catch (error) {
     console.error(error);
     showToast(error?.message || "Prišlo je do napake.");
+  }
+}
+
+function exportProposalRegister() {
+  if (!state.proposals.length) {
+    showToast("Ni shranjenih predlogov za izvoz.");
+    return;
+  }
+
+  setBusy(true);
+  try {
+    const { workbook, rowCount } = createProposalRegisterWorkbook(
+      state.proposals,
+      state.companies,
+      window.XLSX
+    );
+    const bytes = window.XLSX.write(workbook, {
+      bookType: "xlsx",
+      type: "array",
+      cellDates: true,
+      compression: true
+    });
+    downloadBlob(
+      new Blob([bytes], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      }),
+      proposalRegisterFileName()
+    );
+    showToast(`Excelov register vsebuje ${proposalCountLabel(rowCount)}.`);
+  } finally {
+    setBusy(false);
   }
 }
 

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const ONBOARDING_KEY = "predlog-nakupa:onboarding-complete:v1";
 const VERSION_KEY = "center-rog-evidence:last-seen-version";
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z6V8AAAAASUVORK5CYII=",
   "base64"
@@ -191,6 +191,26 @@ test("protects dirty proposal, saves it and exports attachment in PDF", async ({
 
   await page.reload();
   await expect(page.getByRole("button", { name: /Testno podjetje/ })).toBeVisible();
+});
+
+test("exports all saved proposals in one accounting Excel register", async ({ page }) => {
+  await page.locator('[data-field="fullName"]').fill("Računovodski preizkus");
+  await page.locator('[data-field="jobTitle"]').fill("Vodja testnega laba");
+  await page.locator('[data-field="purpose"]').fill("Testni lab");
+  await page.locator('[data-field="explanation"]').fill("Potrošni material 48,50 EUR");
+  await page.locator('[data-field="company"]').fill("Excel podjetje d.o.o.");
+  await page.locator('[data-field="estimatedValueCents"]').fill("48,50");
+  await page.getByRole("button", { name: "Shrani dokument" }).click();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Izvozi vse predloge v Excel" }).click();
+  const download = await downloadPromise;
+
+  expect(download.suggestedFilename()).toMatch(/^register-predlogov-center-rog-\d{4}-\d{2}-\d{2}\.xlsx$/);
+  await expect(page.locator(".toast")).toContainText("Excelov register vsebuje 1 predlog.");
+  const downloadPath = await download.path();
+  expect(downloadPath).toBeTruthy();
+  expect((await readFile(downloadPath)).byteLength).toBeGreaterThan(1000);
 });
 
 test("routes print through the active proposal PDF flow", async ({ page }) => {
