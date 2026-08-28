@@ -26,3 +26,12 @@ Ta postopek uporabi ob menjavi računalnika ali odgovorne osebe. Za prenos potre
 - Starega računalnika ali njegovega brskalniškega profila ne briši, dokler zgornje preverjanje ni zaključeno.
 - Predajni paket in geslo hrani ločeno.
 - Če obnova ne uspe, podatki na starem računalniku ostanejo nedotaknjeni in lahko pripraviš nov paket.
+
+## Če Vercelov naslov ni več na voljo
+
+1. Na [GitHub Releases](https://github.com/grstrazar-netizen/predlog-nakupa/releases/latest) prenesi zadnji lokalni paket ZIP.
+2. Upoštevaj navodila v datoteki `PREBERI-ME.txt`, ki je priložena paketu.
+3. Lokalno aplikacijo odpri na `http://127.0.0.1:4173/` in vanjo obnovi predajni paket.
+4. Starega brskalniškega profila ne briši, dokler ni potrjeno, da so preneseni dokumenti, priponke in podpisi.
+
+GitHub vsebuje programsko kodo, ne pa osebnih podatkov ali zgodovine uporabnikov. Zgodovina se zato vedno prenese ločeno s šifrirano varnostno kopijo.

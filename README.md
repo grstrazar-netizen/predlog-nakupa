@@ -79,6 +79,32 @@ Aplikacija je namenoma brez zalednega strežnika. Dokumenti, priponke in zgodovi
 
 Operativni kontrolni seznam je v [PREDAJA.md](./PREDAJA.md).
 
+### Prenos aplikacije iz GitHuba
+
+Repozitorij je javen na [GitHubu](https://github.com/grstrazar-netizen/predlog-nakupa), zato je aplikacijo mogoče prenesti tudi brez Vercela.
+
+Za običajnega uporabnika je najlažji lokalni paket:
+
+1. Odpri [zadnjo izdajo](https://github.com/grstrazar-netizen/predlog-nakupa/releases/latest).
+2. Pod **Assets** prenesi datoteko `center-rog-evidence-v...-lokalna.zip`.
+3. Razširi ZIP v stalno mapo na računalniku.
+4. Namesti [Node.js LTS](https://nodejs.org/en/download), če še ni nameščen.
+5. V macOS zaženi `ZAZENI-MAC.command`, v Windows pa `ZAZENI-WINDOWS.bat`.
+6. V aplikaciji obnovi šifrirani predajni paket, pripravljen na prejšnjem računalniku.
+
+Lokalni paket ne potrebuje Vercela in po prvem uspešnem odprtju deluje na naslovu `http://127.0.0.1:4173/`. Terminal oziroma ukazno okno mora med uporabo ostati odprto. Uporabniška zgodovina ni vključena v GitHub, ker je shranjena samo v brskalniku; prenesti jo je treba prek **Backup → Prenos na nov računalnik**.
+
+Razvijalec lahko namesto izdaje prenese izvorno kodo z možnostjo **Code → Download ZIP** ali z ukazom:
+
+```bash
+git clone https://github.com/grstrazar-netizen/predlog-nakupa.git
+cd predlog-nakupa
+npm ci
+npm run dev
+```
+
+Podrobna navodila so v [NAMESTITEV-IZ-GITHUBA.md](./NAMESTITEV-IZ-GITHUBA.md).
+
 ### Posodobitve
 
 Datoteka `version.json` vsebuje trenutno javno različico in opombe ob izdaji. Aplikacija jo preveri ob zagonu, ob vrnitvi v zavihek in nato vsakih 15 minut. Ob novi različici pokaže obvestilo za osvežitev, po prvi uporabi nove različice pa modal **Kaj je novega**.

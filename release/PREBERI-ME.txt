@@ -1,0 +1,28 @@
+CENTER ROG EVIDENCE - LOKALNA NAMESTITEV
+=========================================
+
+Ta paket omogoca zagon aplikacije brez Vercela.
+
+PRED PRVIM ZAGONOM
+1. Namesti aktualni Node.js LTS: https://nodejs.org/en/download
+2. Celoten ZIP razsiri v stalno mapo. Datotek ne zaganjaj neposredno iz ZIP-a.
+
+ZAGON NA MACOS
+1. Dvoklikni ZAZENI-MAC.command.
+2. Ce macOS datoteko blokira, jo klikni z desnim gumbom in izberi Odpri.
+
+ZAGON NA WINDOWS
+1. Dvoklikni ZAZENI-WINDOWS.bat.
+
+Aplikacija se odpre na http://127.0.0.1:4173/.
+Terminal oziroma ukazno okno mora med uporabo ostati odprto.
+
+PRENOS ZGODOVINE
+Ta ZIP ne vsebuje dokumentov ali osebnih podatkov. Na starem racunalniku v aplikaciji
+izberi Backup > Prenos na nov racunalnik. V novi lokalni aplikaciji obnovi nastali
+sifrirani paket in preveri dokumente, priponke ter podpis.
+
+POMEMBNO
+- Mape ne izbrisi, dokler uporabljas lokalno aplikacijo.
+- Pred posodobitvijo vedno izdelaj svezo sifrirano varnostno kopijo.
+- GitHub vsebuje programsko kodo, ne uporabniske zgodovine.
