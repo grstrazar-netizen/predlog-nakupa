@@ -216,6 +216,7 @@ const state = {
     events: [],
     selectedDates: [],
     selectionMode: false,
+    filterMenuOpen: false,
     kindPickerOpen: false,
     editor: null,
     deleteConfirmId: ""
@@ -3979,6 +3980,7 @@ function openCalendarEventEditor(eventId = "", kind = "program") {
     startTime: existing?.startTime || "17:00",
     endTime: existing?.endTime || "20:00",
     capacity: existing?.capacity || "",
+    ticketPriceCents: existing?.ticketPriceCents || 0,
     heatmapImpact: existing?.heatmapImpact || "caution",
     selectedDates,
     recurrence: "selected",
@@ -4010,6 +4012,7 @@ async function saveCalendarEventFromForm(form) {
     startTime: isImportant ? "" : String(values.get("startTime") || ""),
     endTime: isImportant ? "" : String(values.get("endTime") || ""),
     capacity: isImportant ? "" : String(values.get("capacity") || "").trim(),
+    ticketPrice: isImportant ? "" : String(values.get("ticketPrice") || "").trim(),
     heatmapImpact: isImportant ? String(values.get("heatmapImpact") || "") : "caution",
     selectedDates: editor.selectedDates,
     recurrence: String(values.get("recurrence") || "selected"),
@@ -4033,6 +4036,7 @@ async function saveCalendarEventFromForm(form) {
     startTime: draft.startTime,
     endTime: draft.endTime,
     capacity: draft.capacity,
+    ticketPrice: draft.ticketPrice,
     heatmapImpact: draft.heatmapImpact,
     dates: validation.dates,
     createdAt: existing?.createdAt || now,
@@ -4266,6 +4270,9 @@ function bindCalendarEvents() {
       state.calendar.filters[checkbox.dataset.calendarFilter] = checkbox.checked;
       render();
     });
+  });
+  document.querySelector("[data-calendar-filter-menu]")?.addEventListener("toggle", (event) => {
+    state.calendar.filterMenuOpen = event.currentTarget.open;
   });
   document.querySelectorAll("[data-calendar-year-step]").forEach((button) => {
     button.addEventListener("click", () => {

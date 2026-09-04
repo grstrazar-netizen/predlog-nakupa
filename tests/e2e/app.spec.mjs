@@ -64,6 +64,11 @@ test("shows the yearly planning heatmap and explains each day", async ({ page })
 
   await expect(page.getByRole("heading", { name: "Koledar programov" })).toBeVisible();
   await expect(page.locator(".calendar-month")).toHaveCount(12);
+  await expect(page.locator(".calendar-summary")).toHaveCount(0);
+  await expect(page.locator(".calendar-tool-button")).toHaveCount(4);
+  await expect(page.locator(".calendar-tool-button").filter({ hasText: /\S/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Vključi ali izključi heatmap" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Izvozi koledar za Asano" })).toBeVisible();
   await page.locator('[data-calendar-date="2026-06-25"]').first().click();
   await expect(page.getByText("Dan državnosti")).toBeVisible();
   await expect(page.locator(".calendar-score")).toContainText("/ 100");
@@ -72,10 +77,11 @@ test("shows the yearly planning heatmap and explains each day", async ({ page })
   await page.getByRole("combobox", { name: "Leto" }).selectOption("2035");
   await page.locator('[data-calendar-date="2035-06-25"]').first().click();
   await expect(page.getByText("Dan državnosti")).toBeVisible();
-  await expect(page.getByText("dolgoročna ocena")).toBeVisible();
+  await expect(page.locator(".calendar-title-block")).toContainText("dolgoročna ocena");
 
   await page.getByRole("combobox", { name: "Leto" }).selectOption("2026");
 
+  await page.locator("[data-calendar-filter-menu] > summary").click();
   await page.getByRole("checkbox", { name: "Šolske počitnice" }).uncheck();
   await page.locator('[data-calendar-date="2026-02-18"]').first().click();
   await expect(page.getByText(/Zimske počitnice \(Ljubljana/)).toHaveCount(0);
@@ -98,6 +104,7 @@ test("plans, persists, edits and deletes a repeating calendar event", async ({ p
   await page.locator('.calendar-choice-option:has(input[name="locationPreset"][value="custom"])').click();
   await page.locator('input[name="locationCustom"]').fill("Keramičarski lab");
   await page.locator('input[name="capacity"]').fill("12");
+  await page.locator('input[name="ticketPrice"]').fill("25,50");
   await page.locator('.calendar-recurrence-option:has(input[value="weekly"])').click();
   await page.locator('input[name="recurrenceEnd"]').fill("2026-01-19");
   await page.locator('[data-calendar-event-form] button[type="submit"]').click();
@@ -114,9 +121,11 @@ test("plans, persists, edits and deletes a repeating calendar event", async ({ p
   await page.getByRole("tab", { name: "Koledar" }).click();
   await page.locator('.calendar-day[data-calendar-date="2026-01-05"]').click();
   await expect(page.locator(".calendar-planned-events")).toContainText("Keramičarski lab");
+  await expect(page.locator(".calendar-planned-events")).toContainText("25,50");
 
   await page.locator("[data-calendar-edit-event]").click();
   await expect(page.locator('input[name="title"]')).toHaveValue("Večerna keramična delavnica");
+  await expect(page.locator('input[name="ticketPrice"]')).toHaveValue("25,50");
   await page.locator('button[data-calendar-close-editor]').last().click();
   await page.locator("[data-calendar-delete-event]").click();
   await expect(page.locator(".delete-modal")).toContainText("5 načrtovanih datumov");
@@ -207,6 +216,7 @@ test("exports planned programs as an Asana-compatible CSV", async ({ page }) => 
   await page.locator('input[name="startTime"]').fill("09:30");
   await page.locator('input[name="endTime"]').fill("12:00");
   await page.locator('input[name="capacity"]').fill("10");
+  await page.locator('input[name="ticketPrice"]').fill("18,50");
   await page.locator('[data-calendar-event-form] button[type="submit"]').click();
   await expect(page.locator(".calendar-event-modal")).toHaveCount(0);
 
@@ -224,6 +234,7 @@ test("exports planned programs as an Asana-compatible CSV", async ({ page }) => 
   expect(csv).toContain('"2026-01-05","2026-01-12"');
   expect(csv).toContain('"PROGRAM LABI","TEČAJ"');
   expect(csv).toContain('"TEČAJ","10","09:30","12:00","Prizidek"');
+  expect(csv).toContain("PREDVIDENA CENA VSTOPNICE: 18,5 EUR");
   expect(csv).toContain("TERMINI:");
   await expect(page.locator(".toast")).toContainText("Asana CSV za leto 2026 je pripravljen za prenos.");
 });

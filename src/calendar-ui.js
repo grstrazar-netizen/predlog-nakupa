@@ -9,7 +9,6 @@ import {
   bestCalendarDays,
   calendarCoverageForYear,
   calendarMonth,
-  calendarYearSummary,
   formatCalendarDate,
   todayCalendarDate
 } from "./calendar-planner.js";
@@ -151,7 +150,7 @@ function renderSelectedDay(calendarState, helpers) {
                   <div class="calendar-event-time">${event.kind === "important" ? icon("flag") : `${escapeHtml(event.startTime)}–${escapeHtml(event.endTime)}`}</div>
                   <div class="calendar-event-copy">
                     <strong>${escapeHtml(event.title)}</strong>
-                    <small>${event.kind === "important" ? `Pomemben datum · ${escapeHtml(HEATMAP_IMPACT_LABELS[event.heatmapImpact] || "Previdno")}` : `${escapeHtml(event.category)} · ${escapeHtml(event.location)}${event.capacity ? ` · ${event.capacity} mest` : ""}`}</small>
+                    <small>${event.kind === "important" ? `Pomemben datum · ${escapeHtml(HEATMAP_IMPACT_LABELS[event.heatmapImpact] || "Previdno")}` : `${escapeHtml(event.category)} · ${escapeHtml(event.location)}${event.capacity ? ` · ${event.capacity} mest` : ""}${event.ticketPriceCents ? ` · ${escapeHtml(formatTicketPrice(event.ticketPriceCents))}` : ""}`}</small>
                   </div>
                   <div class="calendar-event-actions">
                     <button type="button" data-calendar-edit-event="${escapeHtml(event.id)}" aria-label="Uredi ${escapeHtml(event.title)}" title="Uredi dogodek">${icon("pencil")}</button>
@@ -194,6 +193,13 @@ function renderSelectedDay(calendarState, helpers) {
 
 function formatPlanNumber(value, maximumFractionDigits = 1) {
   return Number(value || 0).toLocaleString("sl-SI", { maximumFractionDigits });
+}
+
+function formatTicketPrice(cents) {
+  return (Number(cents || 0) / 100).toLocaleString("sl-SI", {
+    style: "currency",
+    currency: "EUR"
+  });
 }
 
 function slovenianCount(value, forms) {
@@ -385,11 +391,21 @@ function renderEventEditor(calendarState, helpers) {
                 ${fieldError(editor, "endTime", escapeHtml)}
               </label>
             </div>
-            <label class="calendar-form-field calendar-capacity-field">
-              <span>Predvideno število udeležencev <small>neobvezno</small></span>
-              <input class="input" type="number" name="capacity" value="${editor.capacity || ""}" min="1" step="1" inputmode="numeric" placeholder="npr. 12" />
-              ${fieldError(editor, "capacity", escapeHtml)}
-            </label>
+            <div class="calendar-form-grid calendar-commercial-grid">
+              <label class="calendar-form-field calendar-capacity-field">
+                <span>Predvideno število udeležencev <small>neobvezno</small></span>
+                <input class="input" type="number" name="capacity" value="${editor.capacity || ""}" min="1" step="1" inputmode="numeric" placeholder="npr. 12" />
+                ${fieldError(editor, "capacity", escapeHtml)}
+              </label>
+              <label class="calendar-form-field calendar-ticket-price-field">
+                <span>Predvidena cena vstopnice <small>neobvezno</small></span>
+                <div class="calendar-price-input">
+                  <input class="input" type="text" name="ticketPrice" value="${editor.ticketPriceCents ? escapeHtml((editor.ticketPriceCents / 100).toFixed(2).replace(".", ",")) : ""}" inputmode="decimal" placeholder="npr. 25,00" aria-label="Predvidena cena vstopnice v evrih" />
+                  <span>€</span>
+                </div>
+                ${fieldError(editor, "ticketPrice", escapeHtml)}
+              </label>
+            </div>
           `}
 
           <fieldset class="calendar-repeat-box">
@@ -487,8 +503,8 @@ export function renderCalendarWorkspace({
   escapeHtml
 }) {
   const helpers = { icon, escapeHtml };
-  const summary = calendarYearSummary(calendarState.year, calendarState.filters, calendarState.events);
   const coverage = calendarCoverageForYear(calendarState.year);
+  const activeFilterCount = CALENDAR_FILTERS.filter((filter) => calendarState.filters[filter.key]).length;
   const yearOptions = Array.from(
     { length: CALENDAR_YEAR_MAX - CALENDAR_YEAR_MIN + 1 },
     (_, index) => CALENDAR_YEAR_MIN + index
@@ -518,49 +534,52 @@ export function renderCalendarWorkspace({
             <span>${escapeHtml(coverage.label)}</span>
           </div>
           <header class="calendar-header">
-            <div class="calendar-title-block">
-              <h1>Koledar programov</h1>
-              <span>Osrednjeslovenska regija · ${escapeHtml(coverage.label)}</span>
+            <div class="calendar-heading-controls">
+              <div class="calendar-title-block">
+                <h1>Koledar programov</h1>
+                <span>Osrednjeslovenska regija · ${escapeHtml(coverage.label)}</span>
+              </div>
+              <div class="calendar-year-control" aria-label="Izberi leto">
+                <button type="button" data-calendar-year-step="-1" aria-label="Prejšnje leto" ${calendarState.year <= CALENDAR_YEAR_MIN ? "disabled" : ""}>${icon("chevron-left")}</button>
+                <select data-calendar-year-select aria-label="Leto">
+                  ${yearOptions.map((year) => `<option value="${year}" ${year === calendarState.year ? "selected" : ""}>${year}</option>`).join("")}
+                </select>
+                <button type="button" data-calendar-year-step="1" aria-label="Naslednje leto" ${calendarState.year >= CALENDAR_YEAR_MAX ? "disabled" : ""}>${icon("chevron-right")}</button>
+                <button class="calendar-today-button" type="button" data-calendar-today>Danes</button>
+              </div>
             </div>
-            <div class="calendar-year-control" aria-label="Izberi leto">
-              <button type="button" data-calendar-year-step="-1" aria-label="Prejšnje leto" ${calendarState.year <= CALENDAR_YEAR_MIN ? "disabled" : ""}>${icon("chevron-left")}</button>
-              <select data-calendar-year-select aria-label="Leto">
-                ${yearOptions.map((year) => `<option value="${year}" ${year === calendarState.year ? "selected" : ""}>${year}</option>`).join("")}
-              </select>
-              <button type="button" data-calendar-year-step="1" aria-label="Naslednje leto" ${calendarState.year >= CALENDAR_YEAR_MAX ? "disabled" : ""}>${icon("chevron-right")}</button>
-              <button class="calendar-today-button" type="button" data-calendar-today>Danes</button>
-            </div>
-            <div class="calendar-view-controls">
-              <button class="button button-outline calendar-heatmap-toggle${calendarState.heatmapVisible === false ? "" : " is-active"}" type="button" data-calendar-heatmap-toggle aria-pressed="${calendarState.heatmapVisible === false ? "false" : "true"}" title="Prikaži ali skrij barvno oceno primernosti dni.">
-                ${icon("layout-grid")}
-                <span>Heatmap</span>
-              </button>
-              <button class="button button-outline calendar-select-days-button${calendarState.selectionMode ? " is-active" : ""}" type="button" data-calendar-selection-mode aria-pressed="${Boolean(calendarState.selectionMode)}" title="Na računalniku lahko več dni izbereš tudi s tipko Shift.">
-                ${icon(calendarState.selectionMode ? "mouse-pointer-2" : "calendar-plus")}
-                <span>${calendarState.selectionMode ? "Izbiranje vključeno" : "Izberi dneve"}</span>
-              </button>
-              <button class="button button-outline calendar-export-pdf-button" type="button" data-calendar-export-pdf data-busy-sensitive title="Izvozi letni koledar kot PDF A4 pokončno." aria-label="Izvozi koledar kot PDF">
-                ${icon("download")}
-                <span>Izvozi PDF</span>
-              </button>
-              <button class="button button-outline calendar-export-asana-button" type="button" data-calendar-export-asana data-busy-sensitive title="Izvozi načrtovane programe v CSV za uvoz v Asano." aria-label="Izvozi koledar za Asano">
-                ${icon("file-spreadsheet")}
-                <span>Asana CSV</span>
-              </button>
-            </div>
-            <div class="calendar-filters" aria-label="Viri, vključeni v oceno">
-              ${CALENDAR_FILTERS.map(
-                (filter) => `
-                  <label>
-                    <input type="checkbox" data-calendar-filter="${escapeHtml(filter.key)}" ${calendarState.filters[filter.key] ? "checked" : ""} />
-                    <span>${escapeHtml(filter.label)}</span>
-                  </label>`
-              ).join("")}
-            </div>
-            <div class="calendar-summary" aria-label="Povzetek leta">
-              <span><strong>${summary.recommended}</strong> priporočljivih</span>
-              <span><strong>${summary.caution}</strong> tveganih</span>
-              <span><strong>${summary.themes}</strong> tematskih</span>
+            <div class="calendar-toolbar">
+              <div class="calendar-view-controls" role="toolbar" aria-label="Orodja koledarja">
+                <button class="button button-outline calendar-tool-button calendar-heatmap-toggle${calendarState.heatmapVisible === false ? "" : " is-active"}" type="button" data-calendar-heatmap-toggle aria-pressed="${calendarState.heatmapVisible === false ? "false" : "true"}" aria-label="Vključi ali izključi heatmap" title="Vključi ali izključi barvno oceno primernosti dni" data-tooltip="Heatmap">
+                  ${icon("flame")}
+                </button>
+                <button class="button button-outline calendar-tool-button calendar-select-days-button${calendarState.selectionMode ? " is-active" : ""}" type="button" data-calendar-selection-mode aria-pressed="${Boolean(calendarState.selectionMode)}" aria-label="Izberi dneve" title="Izberi več dni; na računalniku lahko uporabiš tudi Shift" data-tooltip="Izberi dneve">
+                  ${icon(calendarState.selectionMode ? "mouse-pointer-2" : "calendar-plus")}
+                </button>
+                <button class="button button-outline calendar-tool-button calendar-export-pdf-button" type="button" data-calendar-export-pdf data-busy-sensitive title="Izvozi letni koledar kot PDF A4 pokončno" aria-label="Izvozi koledar kot PDF" data-tooltip="Izvozi PDF">
+                  ${icon("file-down")}
+                </button>
+                <button class="button button-outline calendar-tool-button calendar-export-asana-button" type="button" data-calendar-export-asana data-busy-sensitive title="Izvozi načrtovane programe v CSV za uvoz v Asano" aria-label="Izvozi koledar za Asano" data-tooltip="Asana CSV">
+                  <span class="calendar-asana-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+                </button>
+              </div>
+              <details class="calendar-filter-menu" data-calendar-filter-menu ${calendarState.filterMenuOpen ? "open" : ""}>
+                <summary aria-label="Viri ocene" title="Izberi koledarske vire, vključene v oceno primernosti">
+                  ${icon("list-filter")}
+                  <span>Viri ocene</span>
+                  <strong>${activeFilterCount}/${CALENDAR_FILTERS.length}</strong>
+                  ${icon("chevron-down")}
+                </summary>
+                <div class="calendar-filters" aria-label="Viri, vključeni v oceno">
+                  ${CALENDAR_FILTERS.map(
+                    (filter) => `
+                      <label>
+                        <input type="checkbox" data-calendar-filter="${escapeHtml(filter.key)}" ${calendarState.filters[filter.key] ? "checked" : ""} />
+                        <span>${escapeHtml(filter.label)}</span>
+                      </label>`
+                  ).join("")}
+                </div>
+              </details>
             </div>
           </header>
 

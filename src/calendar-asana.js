@@ -40,12 +40,13 @@ function eventNotes(event, dates) {
     `LOKACIJA: ${event.location}`,
     `URA: ${event.startTime}–${event.endTime}`,
     event.capacity ? `PREDVIDENO ŠT. UDELEŽENCEV: ${event.capacity}` : "",
+    event.ticketPriceCents ? `PREDVIDENA CENA VSTOPNICE: ${formatHours(event.ticketPriceCents / 100)} EUR` : "",
     `SKUPNO UR: ${formatHours(duration)}`,
     "",
     "TERMINI:",
     ...dates.map((date) => `- ${formatCalendarDate(date)}, ${event.startTime}–${event.endTime}`)
   ];
-  return lines.filter((line, index) => line || index === 5).join("\n");
+  return lines.filter((line, index) => line || index === 6).join("\n");
 }
 
 export function asanaCalendarRows(events = [], year) {

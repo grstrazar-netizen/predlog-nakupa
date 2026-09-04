@@ -56,6 +56,7 @@ test("validates required event fields and time order", () => {
     location: "Laboratorij",
     startTime: "18:00",
     endTime: "17:00",
+    ticketPrice: "12,345",
     selectedDates: ["2026-05-12"],
     recurrence: "selected"
   });
@@ -63,6 +64,7 @@ test("validates required event fields and time order", () => {
   assert.equal(invalid.valid, false);
   assert.equal(invalid.errors.title, "Vnesi naziv dogodka.");
   assert.match(invalid.errors.endTime, /poznejša/);
+  assert.match(invalid.errors.ticketPrice, /veljavno ceno/);
 });
 
 test("normalizes events and includes custom suggestions", () => {
@@ -71,11 +73,13 @@ test("normalizes events and includes custom suggestions", () => {
     title: "  Popravilo koles  ",
     category: "Servisni dan",
     location: "V parku",
+    ticketPrice: "25,50",
     dates: ["2036-01-01", "2026-06-08"]
   });
   const suggestions = calendarEventSuggestions([event]);
 
   assert.equal(event.title, "Popravilo koles");
+  assert.equal(event.ticketPriceCents, 2550);
   assert.deepEqual(event.dates, ["2026-06-08"]);
   assert.ok(suggestions.categories.includes("Servisni dan"));
   assert.ok(suggestions.locations.includes("V parku"));
@@ -100,6 +104,7 @@ test("accepts an important date without program fields", () => {
   assert.equal(event.location, "");
   assert.equal(event.startTime, "");
   assert.equal(event.endTime, "");
+  assert.equal(event.ticketPriceCents, 0);
 });
 
 test("calculates annual program hours, occurrences and capacity by category", () => {

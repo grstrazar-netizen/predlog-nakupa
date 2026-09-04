@@ -18,6 +18,7 @@ const events = [
     startTime: "09:30",
     endTime: "12:00",
     capacity: 12,
+    ticketPriceCents: 2550,
     dates: ["2026-01-05", "2026-01-12", "2027-01-04"]
   },
   {
@@ -50,6 +51,7 @@ test("maps each calendar program to one Asana task for the selected year", () =>
     Lokacija: "Prizidek"
   });
   assert.match(rows[0].Notes, /SKUPNO UR: 5/);
+  assert.match(rows[0].Notes, /PREDVIDENA CENA VSTOPNICE: 25,5 EUR/);
   assert.match(rows[0].Notes, /Ponedeljek, 5\. januar 2026/);
   assert.match(rows[0].Notes, /Ponedeljek, 12\. januar 2026/);
   assert.doesNotMatch(rows[0].Notes, /2027/);

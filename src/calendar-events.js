@@ -44,6 +44,14 @@ export const CALENDAR_RECURRENCE_OPTIONS = [
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+function ticketPriceCents(value) {
+  const normalized = String(value ?? "").trim().replace(/\s/g, "").replace(",", ".");
+  if (!normalized) return 0;
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null;
+  const amount = Number(normalized);
+  return Number.isFinite(amount) && amount >= 0 ? Math.round(amount * 100) : null;
+}
+
 function dateFromIso(value) {
   if (!ISO_DATE_PATTERN.test(String(value || ""))) return null;
   const [year, month, day] = value.split("-").map(Number);
@@ -157,6 +165,11 @@ export function normalizeCalendarEvent(record = {}) {
     capacity: kind === "program"
       ? Math.max(0, Math.round(Number(record.capacity) || 0))
       : 0,
+    ticketPriceCents: kind === "program"
+      ? Number.isFinite(Number(record.ticketPriceCents))
+        ? Math.max(0, Math.round(Number(record.ticketPriceCents)))
+        : ticketPriceCents(record.ticketPrice) || 0
+      : 0,
     heatmapImpact,
     dates: uniqueCalendarDates(record.dates),
     createdAt: String(record.createdAt || ""),
@@ -178,6 +191,10 @@ export function validateCalendarEventDraft(draft = {}) {
     const capacity = String(draft.capacity ?? "").trim();
     if (capacity && (!Number.isInteger(Number(capacity)) || Number(capacity) < 1)) {
       errors.capacity = "Vnesi celo število, večje od 0.";
+    }
+    const price = String(draft.ticketPrice ?? "").trim();
+    if (price && ticketPriceCents(price) === null) {
+      errors.ticketPrice = "Vnesi veljavno ceno z največ dvema decimalkama.";
     }
   } else if (!CALENDAR_HEATMAP_IMPACTS.some((item) => item.value === draft.heatmapImpact)) {
     errors.heatmapImpact = "Izberi vpliv pomembnega datuma.";
