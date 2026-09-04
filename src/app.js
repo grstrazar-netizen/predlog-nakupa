@@ -25,7 +25,9 @@ import {
   deleteOrphanAttachments,
   deleteAsset,
   deleteAttendanceSheet,
+  deleteCalendarEvent,
   getAllAttendanceSheets,
+  getAllCalendarEvents,
   getAllHourProfiles,
   getAllMaterialIssues,
   getAsset,
@@ -37,6 +39,7 @@ import {
   replaceDatabaseFromBackup,
   saveAttendanceSheet as persistAttendanceSheet,
   saveAttendanceSheets as persistAttendanceSheets,
+  saveCalendarEvent as persistCalendarEvent,
   saveHourSecurityBundle,
   clearHourSecurityData,
   saveMaterialIssue as persistMaterialIssue,
@@ -76,6 +79,12 @@ import { createCombinedPdfBlob } from "./pdf.js";
 import { createMaterialIssuePdfBlob } from "./material-issue-pdf.js";
 import { createAttendanceSheetPdfBlob } from "./attendance-sheet-pdf.js";
 import { createHourReportPdfBlob, createHourReportsPdfBlob } from "./hour-report-pdf.js";
+import { createCalendarPdfBlob } from "./calendar-pdf.js";
+import {
+  asanaCalendarFileName,
+  asanaCalendarRows,
+  createAsanaCalendarCsv
+} from "./calendar-asana.js";
 import { renderHourReportsWorkspace } from "./hour-report-ui.js";
 import {
   createHourProfile,
@@ -153,10 +162,24 @@ import {
   createProposalRegisterWorkbook,
   proposalRegisterFileName
 } from "./proposal-register.js";
+import {
+  CALENDAR_YEAR_MAX,
+  CALENDAR_YEAR_MIN,
+  DEFAULT_CALENDAR_FILTERS,
+  todayCalendarDate
+} from "./calendar-planner.js";
+import { renderCalendarWorkspace } from "./calendar-ui.js";
+import {
+  DEFAULT_CALENDAR_EVENT_CATEGORIES,
+  DEFAULT_CALENDAR_EVENT_LOCATIONS,
+  normalizeCalendarEvent,
+  validateCalendarEventDraft
+} from "./calendar-events.js";
 
 const root = document.getElementById("app");
 const SIGNATURE_ASSET_ID = "lab-manager-signature";
 const COMPANY_DIRECTORY_ASSET_ID = "center-rog-company-directory-v1";
+const CALENDAR_SETTINGS_ASSET_ID = "center-rog-calendar-settings-v1";
 const MAX_SIGNATURE_FILE_SIZE = 2 * 1024 * 1024;
 
 const KEYBOARD_SHORTCUTS = {
@@ -185,6 +208,18 @@ const state = {
   hourBatch: null,
   selectedHourReportId: "",
   hourRowDeleteConfirm: null,
+  calendar: {
+    year: Math.max(CALENDAR_YEAR_MIN, Math.min(CALENDAR_YEAR_MAX, new Date().getFullYear())),
+    selectedDate: todayCalendarDate(),
+    filters: { ...DEFAULT_CALENDAR_FILTERS },
+    heatmapVisible: true,
+    events: [],
+    selectedDates: [],
+    selectionMode: false,
+    kindPickerOpen: false,
+    editor: null,
+    deleteConfirmId: ""
+  },
   hourSecurity: {
     status: "loading",
     screen: "setup",
@@ -2425,6 +2460,11 @@ const EVIDENCE_TABS = [
     type: "hourReports",
     label: "Poročila ur",
     icon: "clock-3"
+  },
+  {
+    type: "calendar",
+    label: "Koledar",
+    icon: "calendar-days"
   }
 ];
 
@@ -3658,7 +3698,26 @@ function renderHourReports() {
   renderToast();
 }
 
+function renderCalendar() {
+  const disabledAttr = state.busy ? "disabled" : "";
+  root.innerHTML = renderCalendarWorkspace({
+    calendarState: state.calendar,
+    disabledAttr,
+    renderEvidenceTabs,
+    icon,
+    escapeHtml
+  });
+  renderGlobalOverlays();
+  bindCalendarEvents();
+  refreshIcons();
+  renderToast();
+}
+
 function render() {
+  if (state.documentType === "calendar") {
+    renderCalendar();
+    return;
+  }
   if (state.documentType === "hourReports") {
     renderHourReports();
     return;
@@ -3904,6 +3963,346 @@ function render() {
   renderToast();
   positionOnboardingTooltip({ reveal: true });
   syncOnboardingCalculatorDemo();
+}
+
+function openCalendarEventEditor(eventId = "", kind = "program") {
+  const existing = state.calendar.events.find((event) => event.id === eventId);
+  const selectedDates = existing?.dates?.length
+    ? [...existing.dates]
+    : [...state.calendar.selectedDates];
+  state.calendar.editor = {
+    id: existing?.id || "",
+    kind: existing?.kind || (kind === "important" ? "important" : "program"),
+    title: existing?.title || "",
+    category: existing?.category || DEFAULT_CALENDAR_EVENT_CATEGORIES[0],
+    location: existing?.location || DEFAULT_CALENDAR_EVENT_LOCATIONS[0],
+    startTime: existing?.startTime || "17:00",
+    endTime: existing?.endTime || "20:00",
+    capacity: existing?.capacity || "",
+    heatmapImpact: existing?.heatmapImpact || "caution",
+    selectedDates,
+    recurrence: "selected",
+    recurrenceEnd: `${state.calendar.year}-12-31`,
+    errors: {}
+  };
+  state.calendar.kindPickerOpen = false;
+  render();
+}
+
+function closeCalendarEventEditor() {
+  state.calendar.editor = null;
+  render();
+}
+
+async function saveCalendarEventFromForm(form) {
+  const values = new FormData(form);
+  const editor = state.calendar.editor;
+  if (!editor) return;
+  const categoryPreset = String(values.get("categoryPreset") || "");
+  const locationPreset = String(values.get("locationPreset") || "");
+  const isImportant = editor.kind === "important";
+  const draft = {
+    id: editor.id,
+    kind: editor.kind,
+    title: String(values.get("title") || "").trim(),
+    category: isImportant ? "" : String(categoryPreset === "custom" ? values.get("categoryCustom") : categoryPreset || "").trim(),
+    location: isImportant ? "" : String(locationPreset === "custom" ? values.get("locationCustom") : locationPreset || "").trim(),
+    startTime: isImportant ? "" : String(values.get("startTime") || ""),
+    endTime: isImportant ? "" : String(values.get("endTime") || ""),
+    capacity: isImportant ? "" : String(values.get("capacity") || "").trim(),
+    heatmapImpact: isImportant ? String(values.get("heatmapImpact") || "") : "caution",
+    selectedDates: editor.selectedDates,
+    recurrence: String(values.get("recurrence") || "selected"),
+    recurrenceEnd: String(values.get("recurrenceEnd") || "")
+  };
+  const validation = validateCalendarEventDraft(draft);
+  if (!validation.valid) {
+    state.calendar.editor = { ...editor, ...draft, errors: validation.errors };
+    render();
+    return;
+  }
+
+  const existing = state.calendar.events.find((event) => event.id === editor.id);
+  const now = new Date().toISOString();
+  const event = normalizeCalendarEvent({
+    id: existing?.id || generateId("calendar-event"),
+    kind: draft.kind,
+    title: draft.title,
+    category: draft.category,
+    location: draft.location,
+    startTime: draft.startTime,
+    endTime: draft.endTime,
+    capacity: draft.capacity,
+    heatmapImpact: draft.heatmapImpact,
+    dates: validation.dates,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  });
+
+  setBusy(true);
+  try {
+    await persistCalendarEvent(event);
+    const remaining = state.calendar.events.filter((item) => item.id !== event.id);
+    state.calendar.events = [...remaining, event];
+    state.calendar.selectedDate = event.dates[0];
+    state.calendar.year = Number(event.dates[0].slice(0, 4));
+    state.calendar.selectedDates = [];
+    state.calendar.selectionMode = false;
+    state.calendar.editor = null;
+    render();
+    showToast(existing ? "Vnos je posodobljen." : isImportant ? "Pomemben datum je dodan v koledar." : "Program je dodan v koledar.");
+  } catch (error) {
+    state.calendar.editor = {
+      ...editor,
+      ...draft,
+      errors: { form: error.message || "Dogodka ni bilo mogoče shraniti." }
+    };
+    render();
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function confirmCalendarEventDelete() {
+  const id = state.calendar.deleteConfirmId;
+  if (!id) return;
+  setBusy(true);
+  try {
+    await deleteCalendarEvent(id);
+    state.calendar.events = state.calendar.events.filter((event) => event.id !== id);
+    state.calendar.deleteConfirmId = "";
+    render();
+    showToast("Dogodek je izbrisan.");
+  } catch (error) {
+    state.calendar.deleteConfirmId = "";
+    render();
+    showToast(error.message || "Dogodka ni bilo mogoče izbrisati.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+function toggleCalendarDateSelection(date) {
+  const selected = new Set(state.calendar.selectedDates);
+  if (selected.has(date)) selected.delete(date);
+  else selected.add(date);
+  state.calendar.selectedDates = [...selected].sort();
+  state.calendar.selectedDate = date;
+}
+
+function bindCalendarEvents() {
+  document.querySelectorAll("[data-action]").forEach((button) => {
+    button.addEventListener("click", (event) => handleAction(button.dataset.action, event));
+  });
+  document.querySelectorAll("[data-calendar-date]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      if (event.shiftKey || state.calendar.selectionMode) {
+        toggleCalendarDateSelection(button.dataset.calendarDate);
+        render();
+        return;
+      }
+      if (event.detail > 1) return;
+      window.clearTimeout(button.calendarSingleClickTimer);
+      button.calendarSingleClickTimer = window.setTimeout(() => {
+        state.calendar.selectedDate = button.dataset.calendarDate;
+        render();
+      }, 220);
+    });
+    button.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      window.clearTimeout(button.calendarSingleClickTimer);
+      const date = button.dataset.calendarDate;
+      state.calendar.selectedDate = date;
+      state.calendar.selectedDates = [date];
+      state.calendar.selectionMode = false;
+      state.calendar.kindPickerOpen = true;
+      render();
+    });
+  });
+  document.querySelector("[data-calendar-clear-area]")?.addEventListener("pointerdown", (event) => {
+    if (!state.calendar.selectedDates.length) return;
+    if (event.target.closest("button, input, select, label, a, .calendar-header, .calendar-selection-bar, .calendar-analysis, .calendar-month")) return;
+    state.calendar.selectedDates = [];
+    state.calendar.selectionMode = false;
+    render();
+  });
+  document.querySelector("[data-calendar-selection-mode]")?.addEventListener("click", () => {
+    state.calendar.selectionMode = !state.calendar.selectionMode;
+    render();
+  });
+  document.querySelector("[data-calendar-clear-selection]")?.addEventListener("click", () => {
+    state.calendar.selectedDates = [];
+    state.calendar.selectionMode = false;
+    render();
+  });
+  document.querySelectorAll("[data-calendar-open-editor]").forEach((button) => {
+    button.addEventListener("click", () => {
+      openCalendarEventEditor("", button.dataset.calendarOpenEditor);
+    });
+  });
+  document.querySelectorAll("[data-calendar-pick-kind]").forEach((button) => {
+    button.addEventListener("click", () => {
+      openCalendarEventEditor("", button.dataset.calendarPickKind);
+    });
+  });
+  document.querySelectorAll("[data-calendar-close-kind-picker]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      if (event.currentTarget.classList.contains("modal-backdrop") && event.target !== event.currentTarget) return;
+      state.calendar.kindPickerOpen = false;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-calendar-title-suggestion]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const titleInput = document.querySelector('[data-calendar-event-form] input[name="title"]');
+      if (!titleInput) return;
+      titleInput.value = button.dataset.calendarTitleSuggestion || "";
+      titleInput.focus();
+    });
+  });
+  document.querySelector("[data-calendar-heatmap-toggle]")?.addEventListener("click", async () => {
+    state.calendar.heatmapVisible = state.calendar.heatmapVisible === false;
+    render();
+    try {
+      await saveAsset({
+        id: CALENDAR_SETTINGS_ASSET_ID,
+        heatmapVisible: state.calendar.heatmapVisible,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      showToast(error.message || "Nastavitve heatmapa ni bilo mogoče shraniti.");
+    }
+  });
+  document.querySelector("[data-calendar-export-pdf]")?.addEventListener("click", async () => {
+    setBusy(true);
+    try {
+      const blob = await createCalendarPdfBlob(state.calendar);
+      downloadBlob(blob, `koledar-programov-${state.calendar.year}.pdf`);
+      showToast("Koledar PDF je pripravljen za prenos.");
+    } catch (error) {
+      showToast(error.message || "Koledarja PDF ni bilo mogoče pripraviti.");
+    } finally {
+      setBusy(false);
+    }
+  });
+  document.querySelector("[data-calendar-export-asana]")?.addEventListener("click", () => {
+    const rows = asanaCalendarRows(state.calendar.events, state.calendar.year);
+    if (!rows.length) {
+      showToast("Za izbrano leto še ni programov za izvoz v Asano.");
+      return;
+    }
+    const csv = createAsanaCalendarCsv(state.calendar.events, state.calendar.year);
+    downloadBlob(
+      new Blob([csv], { type: "text/csv;charset=utf-8" }),
+      asanaCalendarFileName(state.calendar.year)
+    );
+    showToast(`Asana CSV za leto ${state.calendar.year} je pripravljen za prenos.`);
+  });
+  document.querySelectorAll("[data-calendar-edit-event]").forEach((button) => {
+    button.addEventListener("click", () => openCalendarEventEditor(button.dataset.calendarEditEvent));
+  });
+  document.querySelectorAll("[data-calendar-delete-event]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.calendar.deleteConfirmId = button.dataset.calendarDeleteEvent;
+      render();
+    });
+  });
+  document.querySelectorAll("button[data-calendar-close-editor]").forEach((button) => {
+    button.addEventListener("click", closeCalendarEventEditor);
+  });
+  document.querySelector(".calendar-event-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeCalendarEventEditor();
+  });
+  document.querySelector(".calendar-event-modal")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  document.querySelector("[data-calendar-event-form]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void saveCalendarEventFromForm(event.currentTarget);
+  });
+  document.querySelectorAll("[data-calendar-choice-radio]").forEach((radio) => {
+    radio.addEventListener("change", (event) => {
+      if (!event.currentTarget.checked) return;
+      const name = event.currentTarget.dataset.calendarChoiceRadio;
+      const customField = document.querySelector(`[data-calendar-custom-choice="${name}"]`);
+      const isCustom = event.currentTarget.value === "custom";
+      customField?.classList.toggle("is-hidden", !isCustom);
+      if (isCustom) customField?.querySelector("input")?.focus();
+    });
+  });
+  document.querySelectorAll("[data-calendar-recurrence]").forEach((radio) => {
+    radio.addEventListener("change", (event) => {
+      if (!event.currentTarget.checked) return;
+      const recurrence = event.currentTarget.value;
+      const endField = document.querySelector(".calendar-recurrence-end");
+      const endInput = endField?.querySelector("input");
+      const hint = document.querySelector("[data-calendar-repeat-hint]");
+      const repeating = recurrence !== "selected";
+      endField?.classList.toggle("is-hidden", !repeating);
+      if (endInput) endInput.disabled = !repeating;
+      if (hint) {
+        hint.textContent = recurrence === "monthly"
+          ? "Vzorec temelji na izbranih datumih, na primer prvi ponedeljek v mesecu."
+          : recurrence === "weekly"
+            ? "Ponavljajo se dnevi v tednu, ki si jih izbral na koledarju."
+            : recurrence === "daily"
+              ? "Dogodek se doda na vsak dan do končnega datuma."
+              : "Dogodek bo dodan samo na trenutno izbrane dni.";
+      }
+    });
+  });
+  document.querySelectorAll("[data-calendar-cancel-delete]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      if (event.currentTarget.classList.contains("modal-backdrop") && event.target !== event.currentTarget) return;
+      state.calendar.deleteConfirmId = "";
+      render();
+    });
+  });
+  document.querySelector("[data-calendar-confirm-delete]")?.addEventListener("click", () => {
+    void confirmCalendarEventDelete();
+  });
+  document.querySelectorAll("[data-calendar-filter]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      state.calendar.filters[checkbox.dataset.calendarFilter] = checkbox.checked;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-calendar-year-step]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextYear = Math.max(
+        CALENDAR_YEAR_MIN,
+        Math.min(CALENDAR_YEAR_MAX, state.calendar.year + Number(button.dataset.calendarYearStep || 0))
+      );
+      state.calendar.year = nextYear;
+      state.calendar.selectedDate = `${nextYear}-01-01`;
+      state.calendar.selectedDates = [];
+      state.calendar.selectionMode = false;
+      render();
+    });
+  });
+  document.querySelector("[data-calendar-year-select]")?.addEventListener("change", (event) => {
+    const nextYear = Math.max(
+      CALENDAR_YEAR_MIN,
+      Math.min(CALENDAR_YEAR_MAX, Number(event.currentTarget.value))
+    );
+    state.calendar.year = nextYear;
+    state.calendar.selectedDate = `${nextYear}-01-01`;
+    state.calendar.selectedDates = [];
+    state.calendar.selectionMode = false;
+    render();
+  });
+  document.querySelector("[data-calendar-today]")?.addEventListener("click", () => {
+    const today = todayCalendarDate();
+    const todayYear = Number(today.slice(0, 4));
+    state.calendar.year = Math.max(CALENDAR_YEAR_MIN, Math.min(CALENDAR_YEAR_MAX, todayYear));
+    state.calendar.selectedDate = todayYear >= CALENDAR_YEAR_MIN && todayYear <= CALENDAR_YEAR_MAX
+      ? today
+      : `${state.calendar.year}-01-01`;
+    state.calendar.selectedDates = [];
+    state.calendar.selectionMode = false;
+    render();
+  });
+  bindEvidenceNavigationEvents();
 }
 
 function refreshIcons() {
@@ -7625,25 +8024,31 @@ async function init() {
     materialIssues,
     attendanceSheets,
     hourProfiles,
+    calendarEvents,
     signatureAsset,
     attendanceCategoryAsset,
     hourSecurityAsset,
     backupConfig,
-    companyDirectoryAsset
+    companyDirectoryAsset,
+    calendarSettingsAsset
   ] = await Promise.all([
     getAllProposals(),
     getAllMaterialIssues(),
     getAllAttendanceSheets(),
     getAllHourProfiles(),
+    getAllCalendarEvents(),
     getAsset(SIGNATURE_ASSET_ID),
     getAsset(ATTENDANCE_CATEGORY_ASSET_ID),
     getAsset(HOUR_SECURITY_ASSET_ID),
     getAsset(BACKUP_CONFIG_ASSET_ID),
-    getAsset(COMPANY_DIRECTORY_ASSET_ID)
+    getAsset(COMPANY_DIRECTORY_ASSET_ID),
+    getAsset(CALENDAR_SETTINGS_ASSET_ID)
   ]);
   state.proposals = sortRecent(proposals);
   state.materialIssues = sortRecent(materialIssues);
   state.attendanceSheets = sortRecent(attendanceSheets);
+  state.calendar.events = calendarEvents.map(normalizeCalendarEvent);
+  state.calendar.heatmapVisible = calendarSettingsAsset?.heatmapVisible !== false;
   const encryptedHourProfiles = hourProfiles.filter(isEncryptedHourProfileRecord);
   if (isUnprotectedHourSecurity(hourSecurityAsset)) {
     state.hourProfiles = hourProfiles.map((profile) =>

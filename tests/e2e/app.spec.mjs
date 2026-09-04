@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const ONBOARDING_KEY = "predlog-nakupa:onboarding-complete:v1";
 const VERSION_KEY = "center-rog-evidence:last-seen-version";
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.3.0";
 const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z6V8AAAAASUVORK5CYII=",
   "base64"
@@ -53,10 +53,179 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("loads all evidences and opens backup settings", async ({ page }) => {
-  await expect(page.getByRole("tab")).toHaveCount(4);
+  await expect(page.getByRole("tab")).toHaveCount(5);
   await page.getByRole("button", { name: "Odpri varnostne kopije" }).click();
   await expect(page.getByRole("heading", { name: "Varnostne kopije" })).toBeVisible();
   await expect(page.getByText(`Različica aplikacije ${APP_VERSION}`)).toBeVisible();
+});
+
+test("shows the yearly planning heatmap and explains each day", async ({ page }) => {
+  await page.getByRole("tab", { name: "Koledar" }).click();
+
+  await expect(page.getByRole("heading", { name: "Koledar programov" })).toBeVisible();
+  await expect(page.locator(".calendar-month")).toHaveCount(12);
+  await page.locator('[data-calendar-date="2026-06-25"]').first().click();
+  await expect(page.getByText("Dan državnosti")).toBeVisible();
+  await expect(page.locator(".calendar-score")).toContainText("/ 100");
+  await expect(page.locator(".calendar-level-label")).toHaveText("Odsvetovano");
+
+  await page.getByRole("combobox", { name: "Leto" }).selectOption("2035");
+  await page.locator('[data-calendar-date="2035-06-25"]').first().click();
+  await expect(page.getByText("Dan državnosti")).toBeVisible();
+  await expect(page.getByText("dolgoročna ocena")).toBeVisible();
+
+  await page.getByRole("combobox", { name: "Leto" }).selectOption("2026");
+
+  await page.getByRole("checkbox", { name: "Šolske počitnice" }).uncheck();
+  await page.locator('[data-calendar-date="2026-02-18"]').first().click();
+  await expect(page.getByText(/Zimske počitnice \(Ljubljana/)).toHaveCount(0);
+});
+
+test("plans, persists, edits and deletes a repeating calendar event", async ({ page }) => {
+  await page.getByRole("tab", { name: "Koledar" }).click();
+  await page.locator("[data-calendar-selection-mode]").click();
+  await page.locator('.calendar-day[data-calendar-date="2026-01-05"]').click();
+  await page.locator('.calendar-day[data-calendar-date="2026-01-07"]').click();
+
+  await expect(page.locator(".calendar-selection-bar")).toContainText("2 izbranih dni");
+  await page.locator('[data-calendar-open-editor="program"]').click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const modalBox = await page.locator(".calendar-event-modal").boundingBox();
+  expect(modalBox.x).toBeGreaterThanOrEqual(0);
+  expect(modalBox.x + modalBox.width).toBeLessThanOrEqual(390);
+  await page.locator('input[name="title"]').fill("Večerna keramična delavnica");
+  await page.locator('.calendar-choice-option:has(input[name="categoryPreset"][value="Delavnica"])').click();
+  await page.locator('.calendar-choice-option:has(input[name="locationPreset"][value="custom"])').click();
+  await page.locator('input[name="locationCustom"]').fill("Keramičarski lab");
+  await page.locator('input[name="capacity"]').fill("12");
+  await page.locator('.calendar-recurrence-option:has(input[value="weekly"])').click();
+  await page.locator('input[name="recurrenceEnd"]').fill("2026-01-19");
+  await page.locator('[data-calendar-event-form] button[type="submit"]').click();
+
+  await expect(page.locator(".calendar-planned-events")).toContainText("Večerna keramična delavnica");
+  await expect(page.locator(".calendar-day.has-planned-events")).toHaveCount(5);
+  await expect(page.locator(".calendar-year-plan")).toContainText("15");
+  await expect(page.locator(".calendar-year-plan")).toContainText("5 terminov");
+  await expect(page.locator(".calendar-year-plan")).toContainText("12");
+  await expect(page.locator(".calendar-category-breakdown")).toContainText("Delavnica");
+
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.reload();
+  await page.getByRole("tab", { name: "Koledar" }).click();
+  await page.locator('.calendar-day[data-calendar-date="2026-01-05"]').click();
+  await expect(page.locator(".calendar-planned-events")).toContainText("Keramičarski lab");
+
+  await page.locator("[data-calendar-edit-event]").click();
+  await expect(page.locator('input[name="title"]')).toHaveValue("Večerna keramična delavnica");
+  await page.locator('button[data-calendar-close-editor]').last().click();
+  await page.locator("[data-calendar-delete-event]").click();
+  await expect(page.locator(".delete-modal")).toContainText("5 načrtovanih datumov");
+  await page.locator("[data-calendar-confirm-delete]").click();
+  await expect(page.locator(".calendar-planned-events")).not.toContainText("Večerna keramična delavnica");
+});
+
+test("adds an important date and remembers the hidden heatmap", async ({ page }) => {
+  await page.getByRole("tab", { name: "Koledar" }).click();
+  const targetDay = page.locator('.calendar-day[data-calendar-date="2026-09-08"]');
+  await targetDay.click({ modifiers: ["Shift"] });
+  const originalLevel = (await targetDay.getAttribute("class"))?.match(/level-\w+/)?.[0];
+
+  await page.locator('[data-calendar-open-editor="important"]').click();
+  await page.locator('[data-calendar-title-suggestion="Rog Forum"]').click();
+  await expect(page.locator('input[name="title"]')).toHaveValue("Rog Forum");
+  await page.locator('.calendar-impact-option:has(input[value="avoid"])').click();
+  await page.locator('[data-calendar-event-form] button[type="submit"]').click();
+
+  await expect(page.locator(".calendar-planned-events")).toContainText("Rog Forum");
+  await expect(page.locator(".calendar-planned-events")).toContainText("Ni primeren");
+  await expect(targetDay).not.toHaveClass(new RegExp(originalLevel || "$^"));
+  await expect(page.getByRole("checkbox", { name: "Interni datumi" })).toBeChecked();
+
+  await page.locator("[data-calendar-heatmap-toggle]").click();
+  await expect(page.locator(".calendar-surface")).toHaveClass(/is-heatmap-hidden/);
+  await expect(page.locator("[data-calendar-heatmap-toggle]")).toHaveAttribute("aria-pressed", "false");
+
+  await page.reload();
+  await page.getByRole("tab", { name: "Koledar" }).click();
+  await expect(page.locator(".calendar-surface")).toHaveClass(/is-heatmap-hidden/);
+  await page.locator('.calendar-day[data-calendar-date="2026-09-08"]').click();
+  await expect(page.locator(".calendar-planned-events")).toContainText("Rog Forum");
+});
+
+test("opens the event type picker on double click and clears selected days from the background", async ({ page }) => {
+  await page.getByRole("tab", { name: "Koledar" }).click();
+  await page.locator('.calendar-day[data-calendar-date="2026-03-10"]').dblclick();
+
+  await expect(page.getByRole("heading", { name: "Kaj želiš dodati?" })).toBeVisible();
+  await expect(page.locator('[data-calendar-pick-kind="program"]')).toBeVisible();
+  await expect(page.locator('[data-calendar-pick-kind="important"]')).toBeVisible();
+  await page.locator('[data-calendar-pick-kind="important"]').click();
+  await expect(page.getByRole("heading", { name: "Dodaj pomemben datum" })).toBeVisible();
+  await page.locator('button[data-calendar-close-editor]').last().click();
+
+  await expect(page.locator(".calendar-selection-bar")).toContainText("1 izbran dan");
+  await page.locator(".calendar-quarter").first().click({ position: { x: 12, y: 80 } });
+  await expect(page.locator(".calendar-selection-bar")).toHaveCount(0);
+});
+
+test("exports the yearly calendar as a one-page portrait A4 PDF", async ({ page }) => {
+  await page.getByRole("tab", { name: "Koledar" }).click();
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Izvozi koledar kot PDF" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("koledar-programov-2026.pdf");
+
+  const pdfPath = await download.path();
+  expect(pdfPath).toBeTruthy();
+  const bytes = await readFile(pdfPath);
+  expect(bytes.subarray(0, 4).toString()).toBe("%PDF");
+  const details = await page.evaluate(async (base64) => {
+    const data = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+    const document = await window.PDFLib.PDFDocument.load(data);
+    const [pdfPage] = document.getPages();
+    return {
+      pages: document.getPageCount(),
+      width: pdfPage.getWidth(),
+      height: pdfPage.getHeight()
+    };
+  }, bytes.toString("base64"));
+  expect(details.pages).toBe(1);
+  expect(details.height).toBeGreaterThan(details.width);
+  expect(details.width).toBeCloseTo(595.28, 1);
+  expect(details.height).toBeCloseTo(841.89, 1);
+  await expect(page.locator(".toast")).toContainText("Koledar PDF je pripravljen za prenos.");
+});
+
+test("exports planned programs as an Asana-compatible CSV", async ({ page }) => {
+  await page.getByRole("tab", { name: "Koledar" }).click();
+  await page.locator('.calendar-day[data-calendar-date="2026-01-05"]').click({ modifiers: ["Shift"] });
+  await page.locator('.calendar-day[data-calendar-date="2026-01-12"]').click({ modifiers: ["Shift"] });
+  await page.locator('[data-calendar-open-editor="program"]').click();
+  await page.locator('input[name="title"]').fill("Tečaj za Asano");
+  await page.locator('.calendar-choice-option:has(input[name="categoryPreset"][value="Tečaj"])').click();
+  await page.locator('.calendar-choice-option:has(input[name="locationPreset"][value="Prizidek"])').click();
+  await page.locator('input[name="startTime"]').fill("09:30");
+  await page.locator('input[name="endTime"]').fill("12:00");
+  await page.locator('input[name="capacity"]').fill("10");
+  await page.locator('[data-calendar-event-form] button[type="submit"]').click();
+  await expect(page.locator(".calendar-event-modal")).toHaveCount(0);
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Izvozi koledar za Asano" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("asana-koledar-programov-2026.csv");
+
+  const csvPath = await download.path();
+  expect(csvPath).toBeTruthy();
+  const csv = await readFile(csvPath, "utf8");
+  expect(csv.startsWith("\uFEFF")).toBeTruthy();
+  expect(csv).toContain('"Name","Section/Column","Start Date","Due Date"');
+  expect(csv).toContain('"Tečaj za Asano"');
+  expect(csv).toContain('"2026-01-05","2026-01-12"');
+  expect(csv).toContain('"PROGRAM LABI","TEČAJ"');
+  expect(csv).toContain('"TEČAJ","10","09:30","12:00","Prizidek"');
+  expect(csv).toContain("TERMINI:");
+  await expect(page.locator(".toast")).toContainText("Asana CSV za leto 2026 je pripravljen za prenos.");
 });
 
 test("creates an encrypted manual backup when folder access is unavailable", async ({ page }) => {

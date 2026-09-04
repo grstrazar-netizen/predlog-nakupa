@@ -1,10 +1,11 @@
 const DB_NAME = "predlog-nakupa-db";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 const STORES = {
   proposals: "proposals",
   materialIssues: "materialIssues",
   attendanceSheets: "attendanceSheets",
   hourProfiles: "hourProfiles",
+  calendarEvents: "calendarEvents",
   attachments: "attachments",
   assets: "assets"
 };
@@ -85,6 +86,11 @@ export function openDatabase() {
       if (!db.objectStoreNames.contains(STORES.hourProfiles)) {
         const store = db.createObjectStore(STORES.hourProfiles, { keyPath: "id" });
         store.createIndex("name", "name", { unique: false });
+        store.createIndex("updatedAt", "updatedAt", { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains(STORES.calendarEvents)) {
+        const store = db.createObjectStore(STORES.calendarEvents, { keyPath: "id" });
         store.createIndex("updatedAt", "updatedAt", { unique: false });
       }
 
@@ -178,6 +184,29 @@ export async function getAllHourProfiles() {
   return requestToPromise(
     db.transaction(STORES.hourProfiles).objectStore(STORES.hourProfiles).getAll()
   );
+}
+
+export async function getAllCalendarEvents() {
+  const db = await openDatabase();
+  return requestToPromise(
+    db.transaction(STORES.calendarEvents).objectStore(STORES.calendarEvents).getAll()
+  );
+}
+
+export async function saveCalendarEvent(event) {
+  const db = await openDatabase();
+  const tx = db.transaction(STORES.calendarEvents, "readwrite");
+  tx.objectStore(STORES.calendarEvents).put(event);
+  await transactionDone(tx);
+  return event;
+}
+
+export async function deleteCalendarEvent(id) {
+  if (!id) return;
+  const db = await openDatabase();
+  const tx = db.transaction(STORES.calendarEvents, "readwrite");
+  tx.objectStore(STORES.calendarEvents).delete(id);
+  await transactionDone(tx);
 }
 
 export async function saveHourProfile(profile) {
