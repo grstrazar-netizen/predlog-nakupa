@@ -18,6 +18,31 @@ export const DEFAULT_CALENDAR_EVENT_LOCATIONS = [
   "Park"
 ];
 
+export const CALENDAR_EVENT_COLORS = Object.freeze([
+  { value: "blue", label: "Modra", accent: "#315f9f", fill: "#edf3fa" },
+  { value: "green", label: "Zelena", accent: "#2f7652", fill: "#eaf5ee" },
+  { value: "amber", label: "Rumena", accent: "#a66a1f", fill: "#fbf1df" },
+  { value: "red", label: "Rdeča", accent: "#b64a4a", fill: "#faeaea" },
+  { value: "violet", label: "Vijolična", accent: "#7652a5", fill: "#f2eef7" },
+  { value: "teal", label: "Turkizna", accent: "#28777a", fill: "#e8f5f4" }
+]);
+
+export function calendarEventColor(value) {
+  return CALENDAR_EVENT_COLORS.find((color) => color.value === value) || CALENDAR_EVENT_COLORS[0];
+}
+
+const CALENDAR_EVENT_CATEGORY_COLORS = Object.freeze({
+  Usposabljanje: "blue",
+  Delavnica: "green",
+  "Tečaj": "amber",
+  "Krožek": "red",
+  "Mojstrski tečaj": "violet"
+});
+
+export function calendarEventColorForCategory(category) {
+  return calendarEventColor(CALENDAR_EVENT_CATEGORY_COLORS[String(category || "").trim()] || "teal");
+}
+
 export const CALENDAR_IMPORTANT_DATE_SUGGESTIONS = [
   "Dan soseda",
   "Prešernov dan",
@@ -147,6 +172,9 @@ export function expandCalendarEventDates(selectedDates, recurrence = "selected",
 
 export function normalizeCalendarEvent(record = {}) {
   const kind = record.kind === "important" ? "important" : "program";
+  const category = kind === "program"
+    ? String(record.category || DEFAULT_CALENDAR_EVENT_CATEGORIES[0]).trim()
+    : "";
   const heatmapImpact = CALENDAR_HEATMAP_IMPACTS.some((item) => item.value === record.heatmapImpact)
     ? record.heatmapImpact
     : "caution";
@@ -154,14 +182,13 @@ export function normalizeCalendarEvent(record = {}) {
     id: String(record.id || ""),
     kind,
     title: String(record.title || "").trim(),
-    category: kind === "program"
-      ? String(record.category || DEFAULT_CALENDAR_EVENT_CATEGORIES[0]).trim()
-      : "",
+    category,
     location: kind === "program"
       ? String(record.location || DEFAULT_CALENDAR_EVENT_LOCATIONS[0]).trim()
       : "",
     startTime: kind === "program" ? String(record.startTime || "17:00") : "",
     endTime: kind === "program" ? String(record.endTime || "20:00") : "",
+    color: kind === "program" ? calendarEventColorForCategory(category).value : "",
     capacity: kind === "program"
       ? Math.max(0, Math.round(Number(record.capacity) || 0))
       : 0,
@@ -238,6 +265,39 @@ export function calendarEventsForDate(events, date) {
     });
 }
 
+export function calendarEventConflictsForDate(events, date) {
+  const programs = calendarEventsForDate(events, date).filter((event) => event.kind === "program");
+  const conflicts = [];
+
+  programs.forEach((event, index) => {
+    programs.slice(index + 1).forEach((otherEvent) => {
+      const sameLocation = event.location.trim().toLocaleLowerCase("sl") === otherEvent.location.trim().toLocaleLowerCase("sl");
+      const overlaps = event.startTime < otherEvent.endTime && otherEvent.startTime < event.endTime;
+      if (!sameLocation || !overlaps) return;
+
+      conflicts.push({
+        date,
+        location: event.location,
+        startTime: event.startTime > otherEvent.startTime ? event.startTime : otherEvent.startTime,
+        endTime: event.endTime < otherEvent.endTime ? event.endTime : otherEvent.endTime,
+        eventIds: [event.id, otherEvent.id]
+      });
+    });
+  });
+
+  return conflicts;
+}
+
+export function calendarEventOccurrence(event, date) {
+  const dates = uniqueCalendarDates(event?.dates);
+  const index = dates.indexOf(date);
+  return {
+    current: index >= 0 ? index + 1 : 0,
+    total: dates.length,
+    label: index >= 0 && dates.length > 1 ? `${index + 1}/${dates.length}` : ""
+  };
+}
+
 function eventDurationHours(event) {
   const [startHours, startMinutes] = event.startTime.split(":").map(Number);
   const [endHours, endMinutes] = event.endTime.split(":").map(Number);
@@ -258,6 +318,7 @@ export function calendarYearPlanStatistics(events = [], year) {
   let occurrenceCount = 0;
   let hours = 0;
   let participantCapacity = 0;
+  let participantHours = 0;
   let capacityDefinedCount = 0;
 
   events.map(normalizeCalendarEvent).forEach((event) => {
@@ -280,6 +341,7 @@ export function calendarYearPlanStatistics(events = [], year) {
     occurrenceCount += dates.length;
     hours += eventHours;
     participantCapacity += event.capacity;
+    participantHours += eventHours * event.capacity;
     if (event.capacity > 0) capacityDefinedCount += 1;
     if (event.location) locations.add(event.location);
 
@@ -308,6 +370,10 @@ export function calendarYearPlanStatistics(events = [], year) {
     occurrenceCount,
     hours: roundedHours(hours),
     participantCapacity,
+    participantHours: roundedHours(participantHours),
+    averageHoursPerParticipant: participantCapacity > 0
+      ? roundedHours(participantHours / participantCapacity)
+      : 0,
     capacityDefinedCount,
     locationCount: locations.size,
     monthlyHours: normalizedMonths,

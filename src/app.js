@@ -140,6 +140,7 @@ import {
   createBlankMaterialRow,
   materialIssueTotalCents,
   materialIssueWithSaveMetadata,
+  materialNameSuggestions,
   materialRowAmountCents,
   nextMaterialIssueSerial,
   normalizeMaterialTariff,
@@ -172,6 +173,7 @@ import { renderCalendarWorkspace } from "./calendar-ui.js";
 import {
   DEFAULT_CALENDAR_EVENT_CATEGORIES,
   DEFAULT_CALENDAR_EVENT_LOCATIONS,
+  calendarEventConflictsForDate,
   normalizeCalendarEvent,
   validateCalendarEventDraft
 } from "./calendar-events.js";
@@ -210,6 +212,8 @@ const state = {
   hourRowDeleteConfirm: null,
   calendar: {
     year: Math.max(CALENDAR_YEAR_MIN, Math.min(CALENDAR_YEAR_MAX, new Date().getFullYear())),
+    month: new Date().getMonth(),
+    viewMode: "year",
     selectedDate: todayCalendarDate(),
     filters: { ...DEFAULT_CALENDAR_FILTERS },
     heatmapVisible: true,
@@ -218,6 +222,7 @@ const state = {
     selectionMode: false,
     filterMenuOpen: false,
     kindPickerOpen: false,
+    dayViewDate: "",
     editor: null,
     deleteConfirmId: ""
   },
@@ -2792,15 +2797,20 @@ function renderMaterialIssue() {
                             <tr data-material-row="${escapeHtml(row.id)}">
                               <td class="material-row-index">${index + 1}</td>
                               <td>
-                                <input
-                                  class="${materialValidationClass("material-cell-input", `${prefix}.name`)}"
-                                  data-material-item-field="name"
-                                  data-material-item-id="${escapeHtml(row.id)}"
-                                  value="${escapeHtml(row.name)}"
-                                  aria-label="Naziv materiala v vrstici ${index + 1}"
-                                  ${materialValidationAttrs(`${prefix}.name`)}
-                                />
-                                ${renderMaterialError(`${prefix}.name`)}
+                                <span class="smart-field material-name-smart-field">
+                                  <input
+                                    class="${materialValidationClass("material-cell-input", `${prefix}.name`)}"
+                                    data-material-item-field="name"
+                                    data-material-item-id="${escapeHtml(row.id)}"
+                                    value="${escapeHtml(row.name)}"
+                                    aria-label="Naziv materiala v vrstici ${index + 1}"
+                                    aria-autocomplete="list"
+                                    aria-expanded="false"
+                                    autocomplete="off"
+                                    ${materialValidationAttrs(`${prefix}.name`)}
+                                  />
+                                  ${renderMaterialError(`${prefix}.name`)}
+                                </span>
                               </td>
                               <td>
                                 <select
@@ -3988,6 +3998,7 @@ function openCalendarEventEditor(eventId = "", kind = "program") {
     errors: {}
   };
   state.calendar.kindPickerOpen = false;
+  state.calendar.dayViewDate = "";
   render();
 }
 
@@ -4047,14 +4058,25 @@ async function saveCalendarEventFromForm(form) {
   try {
     await persistCalendarEvent(event);
     const remaining = state.calendar.events.filter((item) => item.id !== event.id);
-    state.calendar.events = [...remaining, event];
+    const nextEvents = [...remaining, event];
+    const conflictingDates = event.dates.filter((date) => (
+      calendarEventConflictsForDate(nextEvents, date).some((conflict) => conflict.eventIds.includes(event.id))
+    ));
+    state.calendar.events = nextEvents;
     state.calendar.selectedDate = event.dates[0];
     state.calendar.year = Number(event.dates[0].slice(0, 4));
+    state.calendar.month = Number(event.dates[0].slice(5, 7)) - 1;
     state.calendar.selectedDates = [];
     state.calendar.selectionMode = false;
     state.calendar.editor = null;
     render();
-    showToast(existing ? "Vnos je posodobljen." : isImportant ? "Pomemben datum je dodan v koledar." : "Program je dodan v koledar.");
+    const successMessage = existing ? "Vnos je posodobljen." : isImportant ? "Pomemben datum je dodan v koledar." : "Program je dodan v koledar.";
+    const conflictMessage = conflictingDates.length === 1
+      ? " Opozorilo: termin se prekriva z drugim programom na isti lokaciji."
+      : conflictingDates.length > 1
+        ? ` Opozorilo: ${conflictingDates.length} terminov se prekriva z drugim programom na isti lokaciji.`
+        : "";
+    showToast(`${successMessage}${conflictMessage}`);
   } catch (error) {
     state.calendar.editor = {
       ...editor,
@@ -4081,6 +4103,36 @@ async function confirmCalendarEventDelete() {
     state.calendar.deleteConfirmId = "";
     render();
     showToast(error.message || "Dogodka ni bilo mogoče izbrisati.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function moveCalendarEventOccurrence(eventId, fromDate, toDate) {
+  const existing = state.calendar.events.find((event) => event.id === eventId);
+  if (!existing || existing.kind !== "program" || fromDate === toDate || !existing.dates.includes(fromDate)) return;
+  if (existing.dates.includes(toDate)) {
+    showToast("Program je na izbranem dnevu že načrtovan.");
+    return;
+  }
+
+  const updated = normalizeCalendarEvent({
+    ...existing,
+    dates: existing.dates.map((date) => date === fromDate ? toDate : date),
+    updatedAt: new Date().toISOString()
+  });
+
+  setBusy(true);
+  try {
+    await persistCalendarEvent(updated);
+    state.calendar.events = state.calendar.events.map((event) => event.id === updated.id ? updated : event);
+    state.calendar.selectedDate = toDate;
+    state.calendar.year = Number(toDate.slice(0, 4));
+    state.calendar.month = Number(toDate.slice(5, 7)) - 1;
+    render();
+    showToast("Termin programa je prestavljen.");
+  } catch (error) {
+    showToast(error.message || "Termina ni bilo mogoče prestaviti.");
   } finally {
     setBusy(false);
   }
@@ -4123,6 +4175,47 @@ function bindCalendarEvents() {
       render();
     });
   });
+  document.querySelectorAll("[data-calendar-event-id][data-calendar-event-date]").forEach((eventCard) => {
+    eventCard.addEventListener("dragstart", (event) => {
+      event.stopPropagation();
+      eventCard.classList.add("is-dragging");
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", JSON.stringify({
+        eventId: eventCard.dataset.calendarEventId,
+        fromDate: eventCard.dataset.calendarEventDate
+      }));
+    });
+    eventCard.addEventListener("dragend", () => {
+      eventCard.classList.remove("is-dragging");
+      document.querySelectorAll(".calendar-monthly-day.is-drop-target").forEach((day) => day.classList.remove("is-drop-target"));
+    });
+    eventCard.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openCalendarEventEditor(eventCard.dataset.calendarEventId);
+    });
+  });
+  document.querySelectorAll(".calendar-monthly-day[data-calendar-date]").forEach((day) => {
+    day.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      day.classList.add("is-drop-target");
+    });
+    day.addEventListener("dragleave", (event) => {
+      if (!day.contains(event.relatedTarget)) day.classList.remove("is-drop-target");
+    });
+    day.addEventListener("drop", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      day.classList.remove("is-drop-target");
+      try {
+        const payload = JSON.parse(event.dataTransfer.getData("text/plain"));
+        void moveCalendarEventOccurrence(payload.eventId, payload.fromDate, day.dataset.calendarDate);
+      } catch {
+        showToast("Termina ni bilo mogoče prestaviti.");
+      }
+    });
+  });
   document.querySelector("[data-calendar-clear-area]")?.addEventListener("pointerdown", (event) => {
     if (!state.calendar.selectedDates.length) return;
     if (event.target.closest("button, input, select, label, a, .calendar-header, .calendar-selection-bar, .calendar-analysis, .calendar-month")) return;
@@ -4138,6 +4231,23 @@ function bindCalendarEvents() {
     state.calendar.selectedDates = [];
     state.calendar.selectionMode = false;
     render();
+  });
+  document.querySelectorAll("[data-calendar-open-day-view]").forEach((trigger) => {
+    trigger.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const date = trigger.dataset.calendarOpenDayView;
+      state.calendar.selectedDate = date;
+      state.calendar.dayViewDate = date;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-calendar-close-day-view]").forEach((trigger) => {
+    trigger.addEventListener("click", (event) => {
+      if (event.currentTarget.classList.contains("modal-backdrop") && event.target !== event.currentTarget) return;
+      state.calendar.dayViewDate = "";
+      render();
+    });
   });
   document.querySelectorAll("[data-calendar-open-editor]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -4177,11 +4287,25 @@ function bindCalendarEvents() {
       showToast(error.message || "Nastavitve heatmapa ni bilo mogoče shraniti.");
     }
   });
+  document.querySelectorAll("[data-calendar-view-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.calendar.viewMode = button.dataset.calendarViewMode === "month" ? "month" : "year";
+      if (state.calendar.viewMode === "month") {
+        state.calendar.month = Number(state.calendar.selectedDate.slice(5, 7)) - 1;
+      }
+      state.calendar.selectedDates = [];
+      state.calendar.selectionMode = false;
+      render();
+    });
+  });
   document.querySelector("[data-calendar-export-pdf]")?.addEventListener("click", async () => {
     setBusy(true);
     try {
       const blob = await createCalendarPdfBlob(state.calendar);
-      downloadBlob(blob, `koledar-programov-${state.calendar.year}.pdf`);
+      const monthSuffix = state.calendar.viewMode === "month"
+        ? `-${String(state.calendar.month + 1).padStart(2, "0")}`
+        : "";
+      downloadBlob(blob, `koledar-programov-${state.calendar.year}${monthSuffix}.pdf`);
       showToast("Koledar PDF je pripravljen za prenos.");
     } catch (error) {
       showToast(error.message || "Koledarja PDF ni bilo mogoče pripraviti.");
@@ -4274,6 +4398,27 @@ function bindCalendarEvents() {
   document.querySelector("[data-calendar-filter-menu]")?.addEventListener("toggle", (event) => {
     state.calendar.filterMenuOpen = event.currentTarget.open;
   });
+  document.querySelectorAll("[data-calendar-month-step]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const step = Number(button.dataset.calendarMonthStep || 0);
+      let nextMonth = state.calendar.month + step;
+      let nextYear = state.calendar.year;
+      if (nextMonth < 0) {
+        nextMonth = 11;
+        nextYear -= 1;
+      } else if (nextMonth > 11) {
+        nextMonth = 0;
+        nextYear += 1;
+      }
+      if (nextYear < CALENDAR_YEAR_MIN || nextYear > CALENDAR_YEAR_MAX) return;
+      state.calendar.year = nextYear;
+      state.calendar.month = nextMonth;
+      state.calendar.selectedDate = `${nextYear}-${String(nextMonth + 1).padStart(2, "0")}-01`;
+      state.calendar.selectedDates = [];
+      state.calendar.selectionMode = false;
+      render();
+    });
+  });
   document.querySelectorAll("[data-calendar-year-step]").forEach((button) => {
     button.addEventListener("click", () => {
       const nextYear = Math.max(
@@ -4281,27 +4426,17 @@ function bindCalendarEvents() {
         Math.min(CALENDAR_YEAR_MAX, state.calendar.year + Number(button.dataset.calendarYearStep || 0))
       );
       state.calendar.year = nextYear;
-      state.calendar.selectedDate = `${nextYear}-01-01`;
+      state.calendar.selectedDate = `${nextYear}-${String((state.calendar.viewMode === "month" ? state.calendar.month : 0) + 1).padStart(2, "0")}-01`;
       state.calendar.selectedDates = [];
       state.calendar.selectionMode = false;
       render();
     });
   });
-  document.querySelector("[data-calendar-year-select]")?.addEventListener("change", (event) => {
-    const nextYear = Math.max(
-      CALENDAR_YEAR_MIN,
-      Math.min(CALENDAR_YEAR_MAX, Number(event.currentTarget.value))
-    );
-    state.calendar.year = nextYear;
-    state.calendar.selectedDate = `${nextYear}-01-01`;
-    state.calendar.selectedDates = [];
-    state.calendar.selectionMode = false;
-    render();
-  });
   document.querySelector("[data-calendar-today]")?.addEventListener("click", () => {
     const today = todayCalendarDate();
     const todayYear = Number(today.slice(0, 4));
     state.calendar.year = Math.max(CALENDAR_YEAR_MIN, Math.min(CALENDAR_YEAR_MAX, todayYear));
+    state.calendar.month = Number(today.slice(5, 7)) - 1;
     state.calendar.selectedDate = todayYear >= CALENDAR_YEAR_MIN && todayYear <= CALENDAR_YEAR_MAX
       ? today
       : `${state.calendar.year}-01-01`;
@@ -4538,6 +4673,14 @@ function bindMaterialIssueEvents() {
   document.querySelectorAll("[data-material-item-field]").forEach((field) => {
     field.addEventListener("input", handleMaterialRowInput);
     field.addEventListener("change", handleMaterialRowInput);
+    if (field.dataset.materialItemField === "name") {
+      field.addEventListener("input", () => showMaterialNameSuggestions(field));
+      field.addEventListener("focus", () => showMaterialNameSuggestions(field));
+      field.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        closeMaterialNameSuggestions();
+      });
+    }
   });
 
   document.querySelectorAll("[data-remove-material-row]").forEach((button) => {
@@ -5699,6 +5842,56 @@ function handleMaterialRowInput(event) {
   if (total) total.textContent = formatCurrency(materialIssueTotalCents(state.currentMaterialIssue));
 }
 
+function closeMaterialNameSuggestions() {
+  document.querySelectorAll(".material-name-suggestion-popover").forEach((popover) => popover.remove());
+  document.querySelectorAll('[data-material-item-field="name"]').forEach((input) => {
+    input.setAttribute("aria-expanded", "false");
+  });
+}
+
+function showMaterialNameSuggestions(input) {
+  closeMaterialNameSuggestions();
+  const suggestions = materialNameSuggestions(state.materialIssues, input.value);
+  if (!suggestions.length) return;
+
+  const popover = document.createElement("div");
+  const rect = input.getBoundingClientRect();
+  popover.className = "suggestion-popover material-name-suggestion-popover";
+  popover.setAttribute("role", "listbox");
+  popover.style.left = `${Math.round(rect.left)}px`;
+  popover.style.top = `${Math.round(rect.bottom + 4)}px`;
+  popover.style.width = `${Math.round(rect.width)}px`;
+
+  suggestions.forEach((suggestion) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "suggestion-button";
+    button.setAttribute("role", "option");
+    button.textContent = suggestion;
+    button.addEventListener("click", () => {
+      const row = state.currentMaterialIssue.items.find(
+        (item) => item.id === input.dataset.materialItemId
+      );
+      if (!row) return;
+      input.value = suggestion;
+      row.name = suggestion;
+      clearMaterialValidationField(`items.${row.id}.name`);
+      markDirty();
+      input.focus();
+      closeMaterialNameSuggestions();
+    });
+    popover.append(button);
+  });
+
+  document.body.append(popover);
+  input.setAttribute("aria-expanded", "true");
+
+  const popoverRect = popover.getBoundingClientRect();
+  if (popoverRect.bottom > window.innerHeight - 8) {
+    popover.style.top = `${Math.max(8, Math.round(rect.top - popoverRect.height - 4))}px`;
+  }
+}
+
 function addMaterialRow() {
   if (state.currentMaterialIssue.items.length >= 8) {
     showToast("Na eno izdajnico lahko dodaš največ 8 vrstic.");
@@ -6124,6 +6317,9 @@ function closeSuggestionsOnOutsideClick(event) {
   }
   if (!event.target.closest(".status-menu") && !event.target.closest("[data-material-status-menu-id]")) {
     closeMaterialStatusMenu();
+  }
+  if (!event.target.closest(".material-name-smart-field")) {
+    closeMaterialNameSuggestions();
   }
   if (event.target.closest(".smart-field")) return;
   document.querySelectorAll(".suggestion-popover").forEach((popover) => popover.remove());

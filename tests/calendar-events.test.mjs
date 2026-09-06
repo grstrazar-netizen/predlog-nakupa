@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  calendarEventConflictsForDate,
+  calendarEventOccurrence,
   calendarEventSuggestions,
   calendarEventsForDate,
   calendarYearPlanStatistics,
@@ -9,6 +11,37 @@ import {
   normalizeCalendarEvent,
   validateCalendarEventDraft
 } from "../src/calendar-events.js";
+
+test("detects overlapping programs at the same location", () => {
+  const events = [
+    normalizeCalendarEvent({ id: "first", title: "Prvi", location: "Laboratorij", startTime: "17:00", endTime: "20:00", dates: ["2026-09-03"] }),
+    normalizeCalendarEvent({ id: "second", title: "Drugi", location: "laboratorij", startTime: "18:30", endTime: "21:00", dates: ["2026-09-03"] }),
+    normalizeCalendarEvent({ id: "other-room", title: "Drug prostor", location: "Park", startTime: "18:00", endTime: "19:00", dates: ["2026-09-03"] }),
+    normalizeCalendarEvent({ id: "later", title: "Kasneje", location: "Laboratorij", startTime: "21:00", endTime: "22:00", dates: ["2026-09-03"] })
+  ];
+
+  assert.deepEqual(calendarEventConflictsForDate(events, "2026-09-03"), [{
+    date: "2026-09-03",
+    location: "Laboratorij",
+    startTime: "18:30",
+    endTime: "20:00",
+    eventIds: ["first", "second"]
+  }]);
+});
+
+test("labels a date with its position in a repeating program", () => {
+  const event = {
+    dates: ["2026-01-05", "2026-01-12", "2026-01-19", "2026-01-26"]
+  };
+
+  assert.deepEqual(calendarEventOccurrence(event, "2026-01-12"), {
+    current: 2,
+    total: 4,
+    label: "2/4"
+  });
+  assert.equal(calendarEventOccurrence(event, "2026-01-05").label, "1/4");
+  assert.equal(calendarEventOccurrence({ dates: ["2026-01-05"] }, "2026-01-05").label, "");
+});
 
 test("keeps explicitly selected consecutive and irregular dates", () => {
   assert.deepEqual(
@@ -80,10 +113,21 @@ test("normalizes events and includes custom suggestions", () => {
 
   assert.equal(event.title, "Popravilo koles");
   assert.equal(event.ticketPriceCents, 2550);
+  assert.equal(event.color, "teal");
   assert.deepEqual(event.dates, ["2026-06-08"]);
   assert.ok(suggestions.categories.includes("Servisni dan"));
   assert.ok(suggestions.locations.includes("V parku"));
   assert.deepEqual(calendarEventsForDate([event], "2026-06-08"), [event]);
+});
+
+test("assigns a consistent program color from its category", () => {
+  assert.equal(normalizeCalendarEvent({ category: "Usposabljanje", color: "red" }).color, "blue");
+  assert.equal(normalizeCalendarEvent({ category: "Delavnica" }).color, "green");
+  assert.equal(normalizeCalendarEvent({ category: "Tečaj" }).color, "amber");
+  assert.equal(normalizeCalendarEvent({ category: "Krožek" }).color, "red");
+  assert.equal(normalizeCalendarEvent({ category: "Mojstrski tečaj" }).color, "violet");
+  assert.equal(normalizeCalendarEvent({ category: "Servisni dan" }).color, "teal");
+  assert.equal(normalizeCalendarEvent({ kind: "important", color: "red" }).color, "");
 });
 
 test("accepts an important date without program fields", () => {
@@ -141,6 +185,8 @@ test("calculates annual program hours, occurrences and capacity by category", ()
   assert.equal(statistics.occurrenceCount, 3);
   assert.equal(statistics.hours, 9);
   assert.equal(statistics.participantCapacity, 20);
+  assert.equal(statistics.participantHours, 100);
+  assert.equal(statistics.averageHoursPerParticipant, 5);
   assert.equal(statistics.locationCount, 2);
   assert.deepEqual(statistics.categories.map(({ name, hours }) => ({ name, hours })), [
     { name: "Tečaj", hours: 7 },

@@ -5,7 +5,13 @@ import {
   calendarCoverageForYear,
   calendarMonth
 } from "./calendar-planner.js";
-import { calendarEventsForDate, calendarYearPlanStatistics } from "./calendar-events.js";
+import {
+  CALENDAR_EVENT_COLORS,
+  calendarEventColorForCategory,
+  calendarEventOccurrence,
+  calendarEventsForDate,
+  calendarYearPlanStatistics
+} from "./calendar-events.js";
 
 let fontBytesPromise;
 
@@ -13,6 +19,11 @@ const PAGE = Object.freeze({
   width: 595.28,
   height: 841.89,
   margin: 18
+});
+
+const LANDSCAPE_PAGE = Object.freeze({
+  width: PAGE.height,
+  height: PAGE.width
 });
 
 const LEVEL_COLORS = Object.freeze({
@@ -66,14 +77,14 @@ function colorFromHex(rgb, value) {
   );
 }
 
-function yFromTop(top, height = 0) {
-  return PAGE.height - top - height;
+function yFromTop(top, height = 0, pageHeight = PAGE.height) {
+  return pageHeight - top - height;
 }
 
 function drawText(page, text, x, top, options) {
   page.drawText(String(text ?? ""), {
     x,
-    y: yFromTop(top, options.size),
+    y: yFromTop(top, options.size, page.getHeight()),
     size: options.size,
     font: options.font,
     color: options.color
@@ -86,10 +97,24 @@ function drawCenteredText(page, text, centerX, top, options) {
   drawText(page, value, centerX - width / 2, top, options);
 }
 
+function textWithinWidth(text, font, size, maxWidth) {
+  const value = String(text ?? "");
+  if (font.widthOfTextAtSize(value, size) <= maxWidth) return value;
+  let shortened = value;
+  while (shortened.length > 1 && font.widthOfTextAtSize(`${shortened}…`, size) > maxWidth) {
+    shortened = shortened.slice(0, -1).trimEnd();
+  }
+  return `${shortened}…`;
+}
+
+function drawFittedText(page, text, x, top, maxWidth, options) {
+  drawText(page, textWithinWidth(text, options.font, options.size, maxWidth), x, top, options);
+}
+
 function drawLine(page, x1, x2, top, color, thickness = 0.5) {
   page.drawLine({
-    start: { x: x1, y: yFromTop(top) },
-    end: { x: x2, y: yFromTop(top) },
+    start: { x: x1, y: yFromTop(top, 0, page.getHeight()) },
+    end: { x: x2, y: yFromTop(top, 0, page.getHeight()) },
     color,
     thickness
   });
@@ -274,12 +299,177 @@ function drawQuarter(page, quarterIndex, top, calendarState, fonts, colors) {
   }
 }
 
+function drawMonthlySchedule(page, calendarState, fonts, colors) {
+  const monthIndex = Number.isInteger(calendarState.month) ? calendarState.month : 0;
+  const month = calendarMonth(
+    calendarState.year,
+    monthIndex,
+    calendarState.filters,
+    calendarState.events
+  );
+  const cells = [...month.cells, ...Array(Math.max(0, 42 - month.cells.length)).fill(null)];
+  const pageWidth = page.getWidth();
+  const pageHeight = page.getHeight();
+  const gridX = PAGE.margin;
+  const gridTop = 82;
+  const gridWidth = pageWidth - PAGE.margin * 2;
+  const weekdayHeight = 20;
+  const sundayWidthRatio = 0.62;
+  const weekdayCellWidth = gridWidth / (6 + sundayWidthRatio);
+  const columnWidth = (column) => column === 6 ? weekdayCellWidth * sundayWidthRatio : weekdayCellWidth;
+  const columnX = (column) => gridX + Math.min(column, 6) * weekdayCellWidth;
+  const footerTop = pageHeight - 15;
+  const cellHeight = (footerTop - gridTop - weekdayHeight - 10) / 6;
+
+  drawText(page, "MESEČNI URNIK LABORATORIJA", PAGE.margin, 14, {
+    font: fonts.semibold,
+    size: 6.4,
+    color: colors.program
+  });
+  drawText(page, `${CALENDAR_MONTHS[monthIndex]} ${calendarState.year}`, PAGE.margin, 27, {
+    font: fonts.bold,
+    size: 18,
+    color: colors.black
+  });
+  drawText(page, "Center Rog · programi in zasedenost po dnevih", PAGE.margin, 52, {
+    font: fonts.regular,
+    size: 7.2,
+    color: colors.muted
+  });
+  drawLine(page, PAGE.margin, pageWidth - PAGE.margin, 68, colors.black, 0.9);
+
+  CALENDAR_WEEKDAYS.forEach((weekday, index) => {
+    const x = columnX(index);
+    const cellWidth = columnWidth(index);
+    page.drawRectangle({
+      x,
+      y: yFromTop(gridTop, weekdayHeight, pageHeight),
+      width: cellWidth,
+      height: weekdayHeight,
+      color: colors.header,
+      borderColor: colors.grid,
+      borderWidth: 0.45
+    });
+    drawText(page, weekday.toUpperCase(), x + 6, gridTop + 6, {
+      font: fonts.bold,
+      size: 6.2,
+      color: colors.muted
+    });
+  });
+
+  cells.forEach((cell, index) => {
+    const column = index % 7;
+    const row = Math.floor(index / 7);
+    const x = columnX(column);
+    const cellWidth = columnWidth(column);
+    const cellTop = gridTop + weekdayHeight + row * cellHeight;
+    const fill = !cell
+      ? colors.empty
+      : calendarState.heatmapVisible === false
+        ? cell.analysis.weekend ? colors.weekend : colors.white
+        : colors[`${cell.analysis.level.key}Light`];
+
+    page.drawRectangle({
+      x,
+      y: yFromTop(cellTop, cellHeight, pageHeight),
+      width: cellWidth,
+      height: cellHeight,
+      color: fill,
+      borderColor: colors.grid,
+      borderWidth: 0.45
+    });
+    if (!cell) return;
+
+    drawText(page, cell.day, x + 6, cellTop + 6, {
+      font: fonts.bold,
+      size: 8.2,
+      color: colors.black
+    });
+
+    const plannedEvents = calendarEventsForDate(calendarState.events, cell.date);
+    const visibleEvents = plannedEvents.slice(0, 3);
+    let eventTop = cellTop + 23;
+    visibleEvents.forEach((event) => {
+      const important = event.kind === "important";
+      const programColors = colors.programs[calendarEventColorForCategory(event.category).value];
+      const occurrence = calendarEventOccurrence(event, cell.date);
+      const eventHeight = important ? 24 : 29;
+      page.drawRectangle({
+        x: x + 5,
+        y: yFromTop(eventTop, eventHeight, pageHeight),
+        width: cellWidth - 10,
+        height: eventHeight,
+        color: important ? colors.importantFill : programColors.fill
+      });
+      page.drawRectangle({
+        x: x + 5,
+        y: yFromTop(eventTop, eventHeight, pageHeight),
+        width: 2.2,
+        height: eventHeight,
+        color: important ? colors.important : programColors.accent
+      });
+      if (important) {
+        drawText(page, "POMEMBEN DATUM", x + 10, eventTop + 4, {
+          font: fonts.semibold,
+          size: 4.5,
+          color: colors.important
+        });
+        drawFittedText(page, event.title, x + 10, eventTop + 12, cellWidth - 18, {
+          font: fonts.semibold,
+          size: 6.1,
+          color: colors.black
+        });
+      } else {
+        drawFittedText(page, event.title, x + 10, eventTop + 4, cellWidth - 18, {
+          font: fonts.semibold,
+          size: 6.2,
+          color: colors.black
+        });
+        drawText(page, `${event.startTime}–${event.endTime}`, x + 10, eventTop + 13, {
+          font: fonts.semibold,
+          size: 5.3,
+          color: programColors.accent
+        });
+        if (occurrence.label) {
+          const occurrenceWidth = fonts.bold.widthOfTextAtSize(occurrence.label, 5.2);
+          drawText(page, occurrence.label, x + cellWidth - 8 - occurrenceWidth, eventTop + 13, {
+            font: fonts.bold,
+            size: 5.2,
+            color: programColors.accent
+          });
+        }
+        drawFittedText(page, event.location, x + 10, eventTop + 21, cellWidth - 18, {
+          font: fonts.regular,
+          size: 4.8,
+          color: colors.muted
+        });
+      }
+      eventTop += eventHeight + 4;
+    });
+    if (plannedEvents.length > visibleEvents.length) {
+      drawText(page, `+ ${plannedEvents.length - visibleEvents.length} dodatnih`, x + 7, cellTop + cellHeight - 12, {
+        font: fonts.semibold,
+        size: 5.2,
+        color: colors.muted
+      });
+    }
+  });
+
+  drawText(page, "Oznaka 2/6 pomeni drugo srečanje od skupno šestih terminov programa.", PAGE.margin, footerTop, {
+    font: fonts.regular,
+    size: 5.3,
+    color: colors.muted
+  });
+}
+
 export async function createCalendarPdfBlob(calendarState) {
   if (!window.PDFLib) throw new Error("Knjižnica za PDF ni naložena.");
 
   const { PDFDocument, rgb } = window.PDFLib;
   const pdf = await PDFDocument.create();
-  const page = pdf.addPage([PAGE.width, PAGE.height]);
+  const page = calendarState.viewMode === "month"
+    ? pdf.addPage([LANDSCAPE_PAGE.width, LANDSCAPE_PAGE.height])
+    : pdf.addPage([PAGE.width, PAGE.height]);
   const fonts = await embedFonts(pdf);
   const colors = {
     black: colorFromHex(rgb, "#18181b"),
@@ -288,7 +478,21 @@ export async function createCalendarPdfBlob(calendarState) {
     cellBorder: colorFromHex(rgb, "#d6d8dc"),
     hidden: colorFromHex(rgb, "#ffffff"),
     weekend: colorFromHex(rgb, "#f1f2f3"),
+    empty: colorFromHex(rgb, "#f8f8f9"),
+    header: colorFromHex(rgb, "#f3f4f6"),
+    quiet: colorFromHex(rgb, "#a1a1aa"),
     program: colorFromHex(rgb, "#173f74"),
+    programFill: colorFromHex(rgb, "#edf3fa"),
+    important: colorFromHex(rgb, "#7652a5"),
+    importantFill: colorFromHex(rgb, "#f2eef7"),
+    programs: Object.fromEntries(CALENDAR_EVENT_COLORS.map((color) => [
+      color.value,
+      { accent: colorFromHex(rgb, color.accent), fill: colorFromHex(rgb, color.fill) }
+    ])),
+    recommendedLight: colorFromHex(rgb, "#f5faf3"),
+    neutralLight: colorFromHex(rgb, "#fbfaf2"),
+    cautionLight: colorFromHex(rgb, "#fdf8ef"),
+    avoidLight: colorFromHex(rgb, "#fdf3f3"),
     white: rgb(1, 1, 1),
     events: Object.fromEntries(
       Object.entries(EVENT_COLORS).map(([key, value]) => [key, colorFromHex(rgb, value)])
@@ -297,6 +501,10 @@ export async function createCalendarPdfBlob(calendarState) {
       Object.entries(LEVEL_COLORS).map(([key, value]) => [key, colorFromHex(rgb, value)])
     )
   };
+  if (calendarState.viewMode === "month") {
+    drawMonthlySchedule(page, calendarState, fonts, colors);
+    return new Blob([await pdf.save()], { type: "application/pdf" });
+  }
   const coverage = calendarCoverageForYear(calendarState.year);
   const statistics = calendarYearPlanStatistics(calendarState.events, calendarState.year);
 
@@ -311,7 +519,7 @@ export async function createCalendarPdfBlob(calendarState) {
     color: colors.muted
   });
   drawLegend(page, fonts, colors, calendarState.heatmapVisible !== false);
-  const planSummary = `${statistics.hours.toLocaleString("sl-SI", { maximumFractionDigits: 1 })} h · ${statistics.programCount} programov · ${statistics.occurrenceCount} terminov${statistics.capacityDefinedCount ? ` · ${statistics.participantCapacity} mest` : ""}`;
+  const planSummary = `${statistics.hours.toLocaleString("sl-SI", { maximumFractionDigits: 1 })} h · ${statistics.programCount} programov · ${statistics.occurrenceCount} terminov${statistics.capacityDefinedCount ? ` · ${statistics.participantCapacity} mest · ${statistics.averageHoursPerParticipant.toLocaleString("sl-SI", { maximumFractionDigits: 1 })} h/udeleženca` : ""}`;
   const planSummaryWidth = fonts.semibold.widthOfTextAtSize(planSummary, 6.2);
   drawText(page, planSummary, PAGE.width - PAGE.margin - planSummaryWidth, 38, {
     font: fonts.semibold,

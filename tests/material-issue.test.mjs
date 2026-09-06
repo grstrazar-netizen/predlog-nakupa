@@ -4,6 +4,7 @@ import {
   createBlankMaterialIssue,
   materialIssueTotalCents,
   materialIssueWithSaveMetadata,
+  materialNameSuggestions,
   materialRowAmountCents,
   nextMaterialIssueSerial,
   parseQuantity,
@@ -23,6 +24,20 @@ test("calculates material row and document totals", () => {
   ];
   assert.equal(materialRowAmountCents(rows[0]), 3000);
   assert.equal(materialIssueTotalCents({ items: rows }), 4350);
+});
+
+test("suggests unique material names from saved issues", () => {
+  const issues = [
+    { items: [{ name: "Brusni papir" }, { name: "Zaščitne rokavice" }] },
+    { items: [{ name: " brusni   papir " }, { name: "Vijaki M8" }] }
+  ];
+
+  assert.deepEqual(materialNameSuggestions(issues), [
+    "Brusni papir",
+    "Zaščitne rokavice",
+    "Vijaki M8"
+  ]);
+  assert.deepEqual(materialNameSuggestions(issues, "vij"), ["Vijaki M8"]);
 });
 
 test("generates a separate yearly material issue serial", () => {

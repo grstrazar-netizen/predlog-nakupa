@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const ONBOARDING_KEY = "predlog-nakupa:onboarding-complete:v1";
 const VERSION_KEY = "center-rog-evidence:last-seen-version";
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.3.1";
 const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z6V8AAAAASUVORK5CYII=",
   "base64"
@@ -72,14 +72,23 @@ test("shows the yearly planning heatmap and explains each day", async ({ page })
   await page.locator('[data-calendar-date="2026-06-25"]').first().click();
   await expect(page.getByText("Dan državnosti")).toBeVisible();
   await expect(page.locator(".calendar-score")).toContainText("/ 100");
+  await expect(page.getByRole("meter", { name: /Primernost izbranega dne/ })).toHaveAttribute("aria-valuenow", "10");
+  await expect(page.locator(".calendar-score-gauge-value")).toBeVisible();
   await expect(page.locator(".calendar-level-label")).toHaveText("Odsvetovano");
 
-  await page.getByRole("combobox", { name: "Leto" }).selectOption("2035");
+  await expect(page.getByRole("combobox", { name: "Leto" })).toHaveCount(0);
+  const nextYear = page.getByRole("button", { name: "Naslednje leto" });
+  for (let index = 0; index < 9; index += 1) await nextYear.click();
+  await expect(page.locator(".calendar-year-label")).toHaveText("2035");
+  await expect(nextYear).toBeDisabled();
   await page.locator('[data-calendar-date="2035-06-25"]').first().click();
   await expect(page.getByText("Dan državnosti")).toBeVisible();
   await expect(page.locator(".calendar-title-block")).toContainText("dolgoročna ocena");
 
-  await page.getByRole("combobox", { name: "Leto" }).selectOption("2026");
+  const previousYear = page.getByRole("button", { name: "Prejšnje leto" });
+  for (let index = 0; index < 9; index += 1) await previousYear.click();
+  await expect(page.locator(".calendar-year-label")).toHaveText("2026");
+  await expect(previousYear).toBeDisabled();
 
   await page.locator("[data-calendar-filter-menu] > summary").click();
   await page.getByRole("checkbox", { name: "Šolske počitnice" }).uncheck();
@@ -105,6 +114,8 @@ test("plans, persists, edits and deletes a repeating calendar event", async ({ p
   await page.locator('input[name="locationCustom"]').fill("Keramičarski lab");
   await page.locator('input[name="capacity"]').fill("12");
   await page.locator('input[name="ticketPrice"]').fill("25,50");
+  await expect(page.getByText("Barva programa", { exact: true })).toHaveCount(0);
+  await expect(page.locator('.calendar-choice-option:has(input[name="categoryPreset"][value="Delavnica"]) .calendar-category-swatch')).toHaveCSS("background-color", "rgb(47, 118, 82)");
   await page.locator('.calendar-recurrence-option:has(input[value="weekly"])').click();
   await page.locator('input[name="recurrenceEnd"]').fill("2026-01-19");
   await page.locator('[data-calendar-event-form] button[type="submit"]').click();
@@ -114,6 +125,8 @@ test("plans, persists, edits and deletes a repeating calendar event", async ({ p
   await expect(page.locator(".calendar-year-plan")).toContainText("15");
   await expect(page.locator(".calendar-year-plan")).toContainText("5 terminov");
   await expect(page.locator(".calendar-year-plan")).toContainText("12");
+  await expect(page.locator(".calendar-participant-impact")).toContainText("15 h");
+  await expect(page.locator(".calendar-participant-impact")).toContainText("180 udeleženskih ur skupaj");
   await expect(page.locator(".calendar-category-breakdown")).toContainText("Delavnica");
 
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -122,10 +135,12 @@ test("plans, persists, edits and deletes a repeating calendar event", async ({ p
   await page.locator('.calendar-day[data-calendar-date="2026-01-05"]').click();
   await expect(page.locator(".calendar-planned-events")).toContainText("Keramičarski lab");
   await expect(page.locator(".calendar-planned-events")).toContainText("25,50");
+  await expect(page.locator(".calendar-event-item")).toHaveCSS("border-left-color", "rgb(47, 118, 82)");
 
   await page.locator("[data-calendar-edit-event]").click();
   await expect(page.locator('input[name="title"]')).toHaveValue("Večerna keramična delavnica");
   await expect(page.locator('input[name="ticketPrice"]')).toHaveValue("25,50");
+  await expect(page.locator('input[name="categoryPreset"][value="Delavnica"]')).toBeChecked();
   await page.locator('button[data-calendar-close-editor]').last().click();
   await page.locator("[data-calendar-delete-event]").click();
   await expect(page.locator(".delete-modal")).toContainText("5 načrtovanih datumov");
@@ -148,6 +163,7 @@ test("adds an important date and remembers the hidden heatmap", async ({ page })
   await expect(page.locator(".calendar-planned-events")).toContainText("Rog Forum");
   await expect(page.locator(".calendar-planned-events")).toContainText("Ni primeren");
   await expect(targetDay).not.toHaveClass(new RegExp(originalLevel || "$^"));
+  await page.locator("[data-calendar-filter-menu] > summary").click();
   await expect(page.getByRole("checkbox", { name: "Interni datumi" })).toBeChecked();
 
   await page.locator("[data-calendar-heatmap-toggle]").click();
@@ -203,6 +219,122 @@ test("exports the yearly calendar as a one-page portrait A4 PDF", async ({ page 
   expect(details.width).toBeCloseTo(595.28, 1);
   expect(details.height).toBeCloseTo(841.89, 1);
   await expect(page.locator(".toast")).toContainText("Koledar PDF je pripravljen za prenos.");
+});
+
+test("shows a printable monthly schedule with times and meeting sequence", async ({ page }) => {
+  await page.getByRole("tab", { name: "Koledar" }).click();
+  await page.locator('.calendar-day[data-calendar-date="2026-01-05"]').click({ modifiers: ["Shift"] });
+  await page.locator('[data-calendar-open-editor="program"]').click();
+  await page.locator('input[name="title"]').fill("Večerni tečaj varjenja");
+  await page.locator('.calendar-choice-option:has(input[name="categoryPreset"][value="Tečaj"])').click();
+  await page.locator('.calendar-choice-option:has(input[name="locationPreset"][value="Laboratorij"])').click();
+  await page.locator('input[name="startTime"]').fill("17:30");
+  await page.locator('input[name="endTime"]').fill("20:30");
+  await page.locator('.calendar-recurrence-option:has(input[value="weekly"])').click();
+  await page.locator('input[name="recurrenceEnd"]').fill("2026-02-09");
+  await page.locator('[data-calendar-event-form] button[type="submit"]').click();
+
+  await page.getByRole("button", { name: "Mesečno" }).click();
+  await expect(page.getByRole("heading", { name: "Januar 2026" })).toBeVisible();
+  await expect(page.locator(".calendar-month-label")).toHaveText("Januar");
+  await expect(page.getByRole("combobox", { name: "Mesec" })).toHaveCount(0);
+  await expect(page.locator(".calendar-monthly-day")).toHaveCount(31);
+  await expect(page.locator('.calendar-monthly-day[data-calendar-date="2026-01-06"] .calendar-monthly-events')).toHaveText("");
+  await expect(page.locator(".calendar-monthly-free")).toHaveCount(0);
+  const [mondayWidth, sundayWidth] = await page.locator(".calendar-monthly-weekdays span").evaluateAll((weekdays) => [
+    weekdays[0].getBoundingClientRect().width,
+    weekdays[6].getBoundingClientRect().width
+  ]);
+  expect(sundayWidth).toBeLessThan(mondayWidth * 0.7);
+  const secondMeeting = page.locator('.calendar-monthly-day[data-calendar-date="2026-01-12"]');
+  await expect(secondMeeting).toContainText("17:30–20:30");
+  await expect(secondMeeting).toContainText("Večerni tečaj varjenja");
+  await expect(secondMeeting).toContainText("2/6");
+  await expect(secondMeeting).toContainText("Laboratorij");
+  await expect(secondMeeting.locator(".calendar-monthly-event")).toHaveCSS("border-left-color", "rgb(166, 106, 31)");
+  const eventLines = await secondMeeting.locator(".calendar-monthly-event").evaluate((event) => (
+    [...event.children].map((element) => element.textContent.trim())
+  ));
+  expect(eventLines[0]).toBe("Večerni tečaj varjenja");
+  expect(eventLines[1]).toContain("17:30–20:30");
+  expect(eventLines[2]).toBe("Laboratorij");
+
+  await secondMeeting.click();
+  await expect(page.locator(".calendar-selected-date")).toHaveText("Pon, 12. 1.");
+
+  const destinationDay = page.locator('.calendar-monthly-day[data-calendar-date="2026-01-13"]');
+  await secondMeeting.locator(".calendar-monthly-event").dragTo(destinationDay);
+  await expect(destinationDay).toContainText("Večerni tečaj varjenja");
+  await expect(secondMeeting).not.toContainText("Večerni tečaj varjenja");
+  await expect(page.locator(".toast")).toContainText("Termin programa je prestavljen.");
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Izvozi koledar kot PDF" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("koledar-programov-2026-01.pdf");
+  const pdfPath = await download.path();
+  const bytes = await readFile(pdfPath);
+  const details = await page.evaluate(async (base64) => {
+    const data = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+    const document = await window.PDFLib.PDFDocument.load(data);
+    const [pdfPage] = document.getPages();
+    return { pages: document.getPageCount(), width: pdfPage.getWidth(), height: pdfPage.getHeight() };
+  }, bytes.toString("base64"));
+  expect(details.pages).toBe(1);
+  expect(details.width).toBeGreaterThan(details.height);
+
+  await page.getByRole("button", { name: "Naslednji mesec" }).click();
+  await expect(page.getByRole("heading", { name: "Februar 2026" })).toBeVisible();
+  await expect(page.locator('.calendar-monthly-day[data-calendar-date="2026-02-09"]')).toContainText("6/6");
+});
+
+test("warns when programs overlap at the same location", async ({ page }) => {
+  await page.getByRole("tab", { name: "Koledar" }).click();
+
+  for (const [title, startTime, endTime] of [
+    ["Prvi program", "17:00", "20:00"],
+    ["Drugi program", "18:00", "19:00"]
+  ]) {
+    await page.locator('.calendar-day[data-calendar-date="2026-01-05"]').click({ modifiers: ["Shift"] });
+    await page.locator('[data-calendar-open-editor="program"]').click();
+    await page.locator('input[name="title"]').fill(title);
+    await page.locator('.calendar-choice-option:has(input[name="categoryPreset"][value="Usposabljanje"])').click();
+    await page.locator('.calendar-choice-option:has(input[name="locationPreset"][value="Laboratorij"])').click();
+    await page.locator('input[name="startTime"]').fill(startTime);
+    await page.locator('input[name="endTime"]').fill(endTime);
+    await page.locator('[data-calendar-event-form] button[type="submit"]').click();
+  }
+
+  await expect(page.locator(".toast")).toContainText("termin se prekriva");
+  await expect(page.locator(".calendar-conflict-warning")).toContainText("Prekrivanje terminov");
+  await expect(page.locator(".calendar-conflict-warning")).toContainText("Laboratorij · 18:00–19:00");
+  await expect(page.locator(".calendar-event-item.has-conflict")).toHaveCount(2);
+  await expect(page.locator('.calendar-day[data-calendar-date="2026-01-05"]')).toHaveClass(/has-conflicts/);
+
+  await page.locator('.calendar-day[data-calendar-date="2026-01-05"]').click({ modifiers: ["Shift"] });
+  await page.locator('[data-calendar-open-editor="program"]').click();
+  await page.locator('input[name="title"]').fill("Večerni zaključek");
+  await page.locator('.calendar-choice-option:has(input[name="categoryPreset"][value="Delavnica"])').click();
+  await page.locator('.calendar-choice-option:has(input[name="locationPreset"][value="Laboratorij"])').click();
+  await page.locator('input[name="startTime"]').fill("20:00");
+  await page.locator('input[name="endTime"]').fill("22:00");
+  await page.locator('[data-calendar-event-form] button[type="submit"]').click();
+
+  await page.getByRole("button", { name: "Mesečno" }).click();
+  const overflow = page.locator('.calendar-monthly-day[data-calendar-date="2026-01-05"] .calendar-monthly-overflow');
+  await expect(overflow).toContainText("+1 · Dnevni pogled");
+  await overflow.click();
+  await expect(page.getByRole("dialog", { name: "Ponedeljek, 5. januar 2026" })).toBeVisible();
+  await expect(page.locator(".calendar-day-time-event")).toHaveCount(3);
+  await expect(page.locator(".calendar-day-time-axis")).toContainText("17:00");
+  await expect(page.locator(".calendar-day-time-axis")).toContainText("22:00");
+  await expect(page.locator('.calendar-day-time-event[data-calendar-timeline-lane="1"]')).toHaveCount(1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const dayViewBox = await page.locator(".calendar-day-view-modal").boundingBox();
+  expect(dayViewBox.x).toBeGreaterThanOrEqual(0);
+  expect(dayViewBox.x + dayViewBox.width).toBeLessThanOrEqual(390);
+  await page.locator('.calendar-day-view-modal [data-calendar-edit-event]').filter({ hasText: "Večerni zaključek" }).click();
+  await expect(page.locator('input[name="title"]')).toHaveValue("Večerni zaključek");
 });
 
 test("exports planned programs as an Asana-compatible CSV", async ({ page }) => {
@@ -288,7 +420,7 @@ test("transfers saved history through an encrypted handoff package", async ({ pa
 
   await page.evaluate(async () => {
     const db = await new Promise((resolve, reject) => {
-      const request = indexedDB.open("predlog-nakupa-db", 4);
+      const request = indexedDB.open("predlog-nakupa-db");
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
@@ -297,6 +429,7 @@ test("transfers saved history through an encrypted handoff package", async ({ pa
       "materialIssues",
       "attendanceSheets",
       "hourProfiles",
+      "calendarEvents",
       "attachments",
       "assets"
     ];
@@ -371,6 +504,22 @@ test("protects dirty proposal, saves it and exports attachment in PDF", async ({
 
   await page.reload();
   await expect(page.getByRole("button", { name: /Testno podjetje/ })).toBeVisible();
+});
+
+test("remembers saved material names and suggests them on the next issue", async ({ page }) => {
+  await page.getByRole("tab", { name: "Izdajnice materiala" }).click();
+  const materialName = page.getByRole("textbox", { name: "Naziv materiala v vrstici 1" });
+  await materialName.fill("Brusni papir P120");
+  await page.getByRole("button", { name: "Shrani osnutek" }).click();
+  await page.getByRole("button", { name: "Nova izdajnica" }).click();
+
+  const nextMaterialName = page.getByRole("textbox", { name: "Naziv materiala v vrstici 1" });
+  await nextMaterialName.focus();
+  const suggestion = page.getByRole("option", { name: "Brusni papir P120" });
+  await expect(suggestion).toBeVisible();
+  await suggestion.click();
+  await expect(nextMaterialName).toHaveValue("Brusni papir P120");
+  await expect(suggestion).toBeHidden();
 });
 
 test("exports all saved proposals in one accounting Excel register", async ({ page }) => {

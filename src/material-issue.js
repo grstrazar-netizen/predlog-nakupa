@@ -112,6 +112,26 @@ export function materialIssueTotalCents(issue) {
   return (issue?.items || []).reduce((sum, row) => sum + materialRowAmountCents(row), 0);
 }
 
+export function materialNameSuggestions(issues = [], currentValue = "", limit = 6) {
+  const query = String(currentValue || "").trim().toLocaleLowerCase("sl-SI");
+  const seen = new Set();
+  const suggestions = [];
+
+  for (const issue of issues) {
+    for (const row of issue?.items || []) {
+      const value = String(row?.name || "").trim().replace(/\s+/g, " ");
+      const key = value.toLocaleLowerCase("sl-SI");
+      if (!value || seen.has(key)) continue;
+      seen.add(key);
+      if (query && !key.includes(query)) continue;
+      suggestions.push(value);
+      if (suggestions.length >= limit) return suggestions;
+    }
+  }
+
+  return suggestions;
+}
+
 export function nextMaterialIssueSerial(labCode, year, issues, currentId) {
   const prefix = `IZD-${normalizeLabCode(labCode)}-${year}-`;
   const max = (issues || []).reduce((highest, issue) => {
